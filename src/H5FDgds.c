@@ -454,6 +454,8 @@ H5FD_gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
       }
     }
 #endif
+    // TODO: add error print for #elseif 
+
     /* Sanity check on file offsets */
     HDcompile_assert(sizeof(HDoff_t) >= sizeof(size_t));
 
@@ -480,6 +482,7 @@ H5FD_gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         HGOTO_ERROR(H5E_FILE, H5E_CANTOPENFILE, NULL, "unable to open file: name = '%s', errno = %d, error message = '%s', flags = %x, o_flags = %x", name, myerrno, HDstrerror(myerrno), flags, (unsigned)o_flags);
     } /* end if */
 
+    // TODO: use stat instead of fstat
     if(HDfstat(fd, &sb) < 0)
         HSYS_GOTO_ERROR(H5E_FILE, H5E_BADFILE, NULL, "unable to fstat file")
 
@@ -899,7 +902,7 @@ H5FD_gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUSE
     herr_t          ret_value   = SUCCEED;                  /* Return value */
 
 #ifdef H5_GDS_SUPPORT
-    // CUfileError_t status;
+    CUfileError_t status;
     ssize_t ret = -1;
     struct timespec start_time, stop_time;
 
@@ -923,11 +926,11 @@ H5FD_gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUSE
 
 #ifdef H5_GDS_SUPPORT
     if(is_device_pointer(buf)) {
-      // TODO: registers device memory
-      // status = cuFileBufRegister(buf, size, 0);
-      // if (status.err != CU_FILE_SUCCESS) {
-      //   fprintf(stderr, "cufile buffer register failed\n");
-      // }
+      // TODO: register device memory only once
+      status = cuFileBufRegister(buf, size, 0);
+      if (status.err != CU_FILE_SUCCESS) {
+        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      }
 
       if( io_threads > 0 ) {
         assert(size != 0);
@@ -977,11 +980,11 @@ H5FD_gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUSE
         timeprint( "cuFileRead:", timediff(start_time, stop_time) );
       }
 
-      // TODO: deregister device memory
-      // status = cuFileBufDeregister(buf);
-      // if (status.err != CU_FILE_SUCCESS) {
-      //   fprintf(stderr, "cufile buffer deregister failed\n");
-      // }
+      // TODO: deregister device memory only once
+      status = cuFileBufDeregister(buf);
+      if (status.err != CU_FILE_SUCCESS) {
+        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+      }
     }
     else {
 #endif
@@ -1086,7 +1089,7 @@ H5FD_gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
     herr_t          ret_value   = SUCCEED;                  /* Return value */
 
 #ifdef H5_GDS_SUPPORT
-    // CUfileError_t status;
+    CUfileError_t status;
     ssize_t ret = -1;
     struct timespec start_time, stop_time;
 
@@ -1111,11 +1114,11 @@ H5FD_gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
 #ifdef H5_GDS_SUPPORT
     if(is_device_pointer(buf)) {
 
-      // TODO: registers device memory
-      // status = cuFileBufRegister(buf, size, 0);
-      // if (status.err != CU_FILE_SUCCESS) {
-      //   fprintf(stderr, "cufile buffer register failed\n");
-      // }
+      // TODO: registers device memory only once
+      status = cuFileBufRegister(buf, size, 0);
+      if (status.err != CU_FILE_SUCCESS) {
+        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      }
 
       if( io_threads > 0 ) {
         assert(size != 0);
@@ -1165,11 +1168,11 @@ H5FD_gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
         timeprint( "cuFileWrite:", timediff(start_time, stop_time) );
       }
 
-      // TODO: deregister device memory
-      // status = cuFileBufDeregister(buf);
-      // if (status.err != CU_FILE_SUCCESS) {
-      //   fprintf(stderr, "cufile buffer deregister failed\n");
-      // }
+      // TODO: deregister device memory only once
+      status = cuFileBufDeregister(buf);
+      if (status.err != CU_FILE_SUCCESS) {
+        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+      }
     }
     else {
 #endif
