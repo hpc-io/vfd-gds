@@ -308,7 +308,7 @@ static struct timespec timediff(struct timespec start, struct timespec stop) {
 }
 
 static void timeprint(const char *msg, struct timespec t) {
-  printf("%s %ld us\n", msg, (t.tv_sec) * 1000000 + (t.tv_nsec) / 1000);
+  // printf("%s %ld us\n", msg, (t.tv_sec) * 1000000 + (t.tv_nsec) / 1000);
 }
 //////////////////////////////////////////////////////////////////////////
 
@@ -940,8 +940,8 @@ H5FD_gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUSE
           io_threads = (int) (1 + ((size-1)/4096));
         }
 
-        printf("\tH5Pset_gds_read using io_threads: %d\n", io_threads);
-        printf("\tH5Pset_gds_read using io_block_size: %d\n", block_size);
+        // printf("\tH5Pset_gds_read using io_threads: %d\n", io_threads);
+        // printf("\tH5Pset_gds_read using io_block_size: %d\n", block_size);
 
         io_chunk = (unsigned)size / (unsigned)io_threads;
         io_chunk_rem = (unsigned)size % (unsigned)io_threads;
@@ -1128,8 +1128,8 @@ H5FD_gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
           io_threads = (int) (1 + ((size-1)/4096));
         }
 
-        printf("\tH5Pset_gds_write using io_threads: %d\n", io_threads);
-        printf("\tH5Pset_gds_write using io_block_size: %d\n", block_size);
+        // printf("\tH5Pset_gds_write using io_threads: %d\n", io_threads);
+        // printf("\tH5Pset_gds_write using io_block_size: %d\n", block_size);
 
         io_chunk = (unsigned)size / (unsigned)io_threads;
         io_chunk_rem = (unsigned)size % (unsigned)io_threads;
