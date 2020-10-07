@@ -34,6 +34,10 @@
 #include "H5MMprivate.h"    /* Memory management        */
 #include "H5Pprivate.h"     /* Property lists           */
 
+#define ADVISE_OS_DISABLE_READ_CACHE
+#include <fcntl.h>
+#endif /* ADVISE_OS_DISABLE_READ_CACHE */
+
 #ifdef H5_GDS_SUPPORT
 
 #include <cuda.h>
@@ -41,8 +45,6 @@
 #include <cufile.h>
 
 #include <pthread.h>
-
-#include <time.h>
 #endif
 
 #ifdef H5_GDS_SUPPORT
@@ -153,7 +155,7 @@ static void *read_thread_fn(void *data) {
       ret = cuFileRead(td->cfr_handle, td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
       td->size = 0;
     }
-    assert(ret > 0);
+    HDassert(ret > 0);
   }
 
   // fprintf(stderr, "read success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
@@ -180,7 +182,7 @@ static void *write_thread_fn(void *data) {
       ret = cuFileWrite(td->cfr_handle, td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
       td->size = 0;
     }
-    assert(ret > 0);
+    HDassert(ret > 0);
   }
 
   // printf("wrt success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
@@ -310,25 +312,6 @@ H5FD__init_package(void)
 done:
     FUNC_LEAVE_NOAPI(ret_value)
 } /* H5FD__init_package() */
-
-/*      ns timer      */
-static struct timespec gettime_ms(void) {
-  struct timespec t;
-  clock_gettime(CLOCK_MONOTONIC_RAW, &t);
-  return t;
-}
-
-static struct timespec timediff(struct timespec start, struct timespec stop) {
-  struct timespec t;
-  t.tv_sec = (stop.tv_sec - start.tv_sec);
-  t.tv_nsec = (stop.tv_nsec - start.tv_nsec);
-  return t;
-}
-
-static void timeprint(const char *msg, struct timespec t) {
-  // printf("%s %ld us\n", msg, (t.tv_sec) * 1000000 + (t.tv_nsec) / 1000);
-}
-//////////////////////////////////////////////////////////////////////////
 
 
 /*-------------------------------------------------------------------------
@@ -666,6 +649,23 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 
     if (HDfstat(fd, &sb)<0)
         HSYS_GOTO_ERROR(H5E_FILE, H5E_BADFILE, NULL, "unable to fstat file")
+
+#ifdef ADVISE_OS_DISABLE_READ_CACHE
+    if( posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM) != 0 ) {
+      perror("posix_fadvise");
+      exit(EXIT_FAILURE);
+    }
+
+    if( posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED) != 0 ) {
+      perror("posix_fadvise");
+      exit(EXIT_FAILURE);
+    }
+
+    if( posix_fadvise(fd, 0, 0, POSIX_FADV_NOREUSE) != 0 ) {
+      perror("posix_fadvise");
+      exit(EXIT_FAILURE);
+    }
+#endif /* ADVISE_OS_DISABLE_READ_CACHE */
 
     /* Create the new file struct */
     if (NULL==(file=H5FL_CALLOC(H5FD_gds_t)))
@@ -1082,8 +1082,6 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
 #ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     ssize_t ret = -1;
-    struct timespec start_time, stop_time;
-
     int io_threads = file->num_io_threads;
     int block_size = file->io_block_size;
 
@@ -1113,7 +1111,7 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
       }
 
       if( io_threads > 0 ) {
-        assert(size != 0);
+        HDassert(size != 0);
 
         // make each thread access at least a 4K page
         if( (1 + (size-1)/4096) < (unsigned)io_threads ) {
@@ -1140,7 +1138,6 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
           }
         }
 
-        start_time = gettime_ms();
         for (int ii = 0; ii < io_threads; ii++) {
           pthread_create(&file->threads[ii], NULL, &read_thread_fn, &file->td[ii]);
         }
@@ -1148,16 +1145,10 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
         for (int ii = 0; ii < io_threads; ii++) {
           pthread_join(file->threads[ii], NULL);
         }
-        stop_time = gettime_ms();
-        timeprint( "pthread_time:", timediff(start_time, stop_time) );
       }
       else {
-        start_time = gettime_ms();
         ret = cuFileRead(file->cf_handle, buf, size, offset, 0);
-        stop_time = gettime_ms();
-        assert(ret > 0);
-
-        timeprint( "cuFileRead:", timediff(start_time, stop_time) );
+        HDassert(ret > 0);
       }
 
       // TODO: deregister device memory only once
@@ -1354,8 +1345,6 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
 #ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     ssize_t ret = -1;
-    struct timespec start_time, stop_time;
-
     int io_threads = file->num_io_threads;
     int block_size = file->io_block_size;
 
@@ -1363,8 +1352,6 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
     ssize_t io_chunk_rem;
 
     HDoff_t         offset      = (HDoff_t)addr;
-
-    printf("HERE: %s:%d\n", __FILE__, __LINE__);
 #endif
 
     FUNC_ENTER_STATIC
@@ -1381,10 +1368,6 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
 #ifdef H5_GDS_SUPPORT
     if(is_device_pointer(buf)) 
     {
-      printf("\tH5Pset_gds_write using io_threads: %d\n", io_threads);
-      printf("\tH5Pset_gds_write using io_block_size: %d\n", block_size);
-      fflush(stdout);
-
       // TODO: registers device memory only once
       status = cuFileBufRegister(buf, size, 0);
       if (status.err != CU_FILE_SUCCESS) {
@@ -1392,7 +1375,7 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
       }
 
       if( io_threads > 0 ) {
-        assert(size != 0);
+        HDassert(size != 0);
 
         // make each thread access at least a 4K page
         if( (1 + (size-1)/4096) < (unsigned)io_threads ) {
@@ -1419,7 +1402,6 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
           }
         }
 
-        start_time = gettime_ms();
         for (int ii = 0; ii < io_threads; ii++) {
           pthread_create(&file->threads[ii], NULL, &write_thread_fn, &file->td[ii]);
         }
@@ -1427,16 +1409,11 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
         for (int ii = 0; ii < io_threads; ii++) {
           pthread_join(file->threads[ii], NULL);
         }
-        stop_time = gettime_ms();
-        timeprint( "pthread_time:", timediff(start_time, stop_time) );
       }
       else {
-        start_time = gettime_ms();
+        // FIXME: max xfer size, need to batch transfers
         ret = cuFileWrite(file->cf_handle, buf, size, offset, 0);
-        stop_time = gettime_ms();
-        assert(ret > 0);
-
-        timeprint( "cuFileWrite:", timediff(start_time, stop_time) );
+        HDassert(ret > 0);
       }
 
       // TODO: deregister device memory only once
