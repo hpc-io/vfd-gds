@@ -34,7 +34,9 @@
 #include "H5MMprivate.h"    /* Memory management        */
 #include "H5Pprivate.h"     /* Property lists           */
 
-#define ADVISE_OS_DISABLE_READ_CACHE
+// #define ADVISE_OS_DISABLE_READ_CACHE
+
+#ifdef ADVISE_OS_DISABLE_READ_CACHE
 #include <fcntl.h>
 #endif /* ADVISE_OS_DISABLE_READ_CACHE */
 
