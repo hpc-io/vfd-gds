@@ -396,16 +396,17 @@ H5FD__gds_term(void)
 
 #ifdef H5_GDS_SUPPORT
     if(cu_file_driver_opened) {
-      status = cuFileDriverClose();
-      if (status.err == CU_FILE_SUCCESS) {
-        cu_file_driver_opened = false;
-      }
-      else {
-        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to close cufile driver")
-        // TODO: get the error string once the cufile c api is ready
-        // fprintf(stderr, "cufile driver close failed: %s\n",
-        //   cuFileGetErrorString(status));
-      }
+      // FIXME: cuFileDriveClose is throwing errors with h5py and cupy
+      // status = cuFileDriverClose();
+      // if (status.err == CU_FILE_SUCCESS) {
+      //   cu_file_driver_opened = false;
+      // }
+      // else {
+      //   HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to close cufile driver")
+      //   // TODO: get the error string once the cufile c api is ready
+      //   // fprintf(stderr, "cufile driver close failed: %s\n",
+      //   //   cuFileGetErrorString(status));
+      // }
     }
 #endif
 
