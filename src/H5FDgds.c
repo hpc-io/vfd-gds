@@ -1107,10 +1107,10 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
     if(is_device_pointer(buf)) 
     {
       // TODO: register device memory only once
-      status = cuFileBufRegister(buf, size, 0);
-      if (status.err != CU_FILE_SUCCESS) {
-        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
-      }
+      // status = cuFileBufRegister(buf, size, 0);
+      // if (status.err != CU_FILE_SUCCESS) {
+        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      // }
 
       if( io_threads > 0 ) {
         HDassert(size != 0);
@@ -1154,10 +1154,10 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
       }
 
       // TODO: deregister device memory only once
-      status = cuFileBufDeregister(buf);
-      if (status.err != CU_FILE_SUCCESS) {
-        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
-      }
+      // status = cuFileBufDeregister(buf);
+      // if (status.err != CU_FILE_SUCCESS) {
+        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+      // }
     }
     else {
 #endif
@@ -1371,10 +1371,10 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
     if(is_device_pointer(buf)) 
     {
       // TODO: registers device memory only once
-      status = cuFileBufRegister(buf, size, 0);
-      if (status.err != CU_FILE_SUCCESS) {
-        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
-      }
+      // status = cuFileBufRegister(buf, size, 0);
+      // if (status.err != CU_FILE_SUCCESS) {
+        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      // }
 
       if( io_threads > 0 ) {
         HDassert(size != 0);
@@ -1419,10 +1419,10 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
       }
 
       // TODO: deregister device memory only once
-      status = cuFileBufDeregister(buf);
-      if (status.err != CU_FILE_SUCCESS) {
-        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
-      }
+      // status = cuFileBufDeregister(buf);
+      // if (status.err != CU_FILE_SUCCESS) {
+        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+      // }
     }
     else {
 #endif
