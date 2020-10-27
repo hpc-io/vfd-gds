@@ -64,6 +64,8 @@ typedef struct thread_data_t {
 } thread_data_t;
 
 static bool cu_file_driver_opened = false;
+
+// static bool reg_once = false;
 #endif
 
 /* The driver identification number, initialized at runtime */
@@ -609,6 +611,8 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 #ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     CUfileDescr_t cf_descr;
+    char *num_io_threads_var;
+    char *io_block_size_var;
 #endif
 
     int      o_flags;
@@ -689,17 +693,32 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
       HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to register file with cufile driver");
     }
 
+    // DEFAULT io worker params
+    // TODO: error checking
+    file->num_io_threads = 1;
+    file->io_block_size = 8*1024*1024;
+    num_io_threads_var = getenv("H5_GDS_VFD_IO_THREADS");
+    io_block_size_var = getenv("H5_GDS_VFD_IO_BLOCK_SIZE");
+
+    if( num_io_threads_var ) {
+      file->num_io_threads = atoi(num_io_threads_var);
+    }
+
+    if( io_block_size_var ) {
+      file->io_block_size = atoi(io_block_size_var);
+    }
+
     // TODO: error checking for num_io_threads
     // FIXME: move to set fapl
-    H5Pget( fapl_id, "H5_GDS_VFD_IO_THREADS", &file->num_io_threads );
-    H5Pget( fapl_id, "H5_GDS_VFD_IO_BLOCK_SIZE", &file->io_block_size );
+    // H5Pget( fapl_id, "H5_GDS_VFD_IO_THREADS", &file->num_io_threads );
+    // H5Pget( fapl_id, "H5_GDS_VFD_IO_BLOCK_SIZE", &file->io_block_size );
 
     /* IOThreads */
     // TODO: POSSIBLE MEMORY LEAK! figure out how to deal with the the double open H5Fint does
     file->td = (thread_data_t *)HDmalloc((unsigned)file->num_io_threads*sizeof(thread_data_t));
     file->threads = (pthread_t *)HDmalloc((unsigned)file->num_io_threads*sizeof(pthread_t));
 #endif
-    // TODO: add error print for #elseif 
+    // TODO: add error print for #elseif
 
     file->fd = fd;
     H5_CHECKED_ASSIGN(file->eof, haddr_t, sb.st_size, h5_stat_size_t);
@@ -1035,7 +1054,7 @@ done:
 }
 
 bool is_device_pointer (const void *ptr);
-bool is_device_pointer (const void *ptr) 
+bool is_device_pointer (const void *ptr)
 {
   struct cudaPointerAttributes attributes;
   cudaPointerGetAttributes (&attributes, ptr);
@@ -1046,7 +1065,7 @@ bool is_device_pointer (const void *ptr)
 /*-------------------------------------------------------------------------
  * Function:  H5FD__gds_read
  *
- * Purpose:  
+ * Purpose:
  *    GPU buf:
  *    interface with NVIDIA GPUDirect Storage
  *
@@ -1105,12 +1124,15 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
         HGOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow")
 
 #ifdef H5_GDS_SUPPORT
-    if(is_device_pointer(buf)) 
+    if(is_device_pointer(buf))
     {
       // TODO: register device memory only once
-      // status = cuFileBufRegister(buf, size, 0);
-      // if (status.err != CU_FILE_SUCCESS) {
-        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      // if (!reg_once) {
+      //   status = cuFileBufRegister(buf, size, 0);
+      //   if (status.err != CU_FILE_SUCCESS) {
+      //     HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      //   }
+      //   reg_once = true;
       // }
 
       if( io_threads > 0 ) {
@@ -1307,10 +1329,10 @@ done:
 /*-------------------------------------------------------------------------
  * Function:  H5FD__gds_write
  *
- * Purpose:  
+ * Purpose:
  *    GPU buf:
  *    interface with NVIDIA GPUDirect Storage
- *    
+ *
  *    CPU buf:
  *    Writes SIZE bytes of data to FILE beginning at address ADDR
  *    from buffer BUF according to data transfer properties in
@@ -1369,12 +1391,15 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
         HGOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow")
 
 #ifdef H5_GDS_SUPPORT
-    if(is_device_pointer(buf)) 
+    if(is_device_pointer(buf))
     {
-      // TODO: registers device memory only once
-      // status = cuFileBufRegister(buf, size, 0);
-      // if (status.err != CU_FILE_SUCCESS) {
-        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      // TODO: register device memory only once
+      // if (!reg_once) {
+      //   status = cuFileBufRegister(buf, size, 0);
+      //   if (status.err != CU_FILE_SUCCESS) {
+      //     HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+      //   }
+      //   reg_once = true;
       // }
 
       if( io_threads > 0 ) {
