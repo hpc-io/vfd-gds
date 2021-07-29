@@ -21,9 +21,11 @@
 #define H5FDgds_H
 
 #ifdef H5_GDS_SUPPORT
-#define H5FD_GDS (H5FD_gds_init())
+#define H5FD_GDS       (H5FD_gds_init())
+#define H5FD_GDS_VALUE 65536
 #else
-#define H5FD_GDS (-1)
+#define H5FD_GDS       (-1)
+#define H5FD_GDS_VALUE H5_VFD_INVALID
 #endif /* H5_GDS_SUPPORT */
 
 #define check_cudadrivercall(fn)                                                                             \

@@ -223,6 +223,8 @@ write_thread_fn(void *data)
 
 /* Prototypes */
 static herr_t  H5FD__gds_term(void);
+static herr_t  H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size,
+                                         H5FD_gds_fapl_t *fa_out);
 static void *  H5FD__gds_fapl_get(H5FD_t *file);
 static void *  H5FD__gds_fapl_copy(const void *_old_fa);
 static H5FD_t *H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr);
@@ -241,8 +243,10 @@ static herr_t  H5FD__gds_flush(H5FD_t *_file, hid_t dxpl_id, hbool_t closing);
 static herr_t  H5FD__gds_truncate(H5FD_t *_file, hid_t dxpl_id, hbool_t closing);
 static herr_t  H5FD__gds_lock(H5FD_t *_file, hbool_t rw);
 static herr_t  H5FD__gds_unlock(H5FD_t *_file);
+static herr_t  H5FD__gds_delete(const char *filename, hid_t fapl_id);
 
 static const H5FD_class_t H5FD_gds_g = {
+    H5FD_GDS_VALUE,          /* value                */
     "gds",                   /* name                 */
     MAXADDR,                 /* maxaddr              */
     H5F_CLOSE_WEAK,          /* fc_degree            */
@@ -274,6 +278,7 @@ static const H5FD_class_t H5FD_gds_g = {
     H5FD__gds_truncate,      /* truncate             */
     H5FD__gds_lock,          /* lock                 */
     H5FD__gds_unlock,        /* unlock               */
+    H5FD__gds_delete,        /* delete               */
     H5FD_FLMAP_DICHOTOMY     /* fl_map               */
 };
 
@@ -351,7 +356,7 @@ H5FD_gds_init(void)
             cu_file_driver_opened = true;
         }
         else {
-            HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to open cufile driver");
+            HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, H5I_INVALID_HID, "unable to open cufile driver");
             // TODO: get the error string once the cufile c api is ready
             // fprintf(stderr, "cufile driver open error: %s\n",
             //  cuFileGetErrorString(status));
@@ -448,28 +453,10 @@ H5Pset_fapl_gds(hid_t fapl_id, size_t boundary, size_t block_size, size_t cbuf_s
     if (NULL == (plist = H5P_object_verify(fapl_id, H5P_FILE_ACCESS)))
         HGOTO_ERROR(H5E_ARGS, H5E_BADTYPE, FAIL, "not a file access property list")
 
-    HDmemset(&fa, 0, sizeof(H5FD_gds_fapl_t));
-    if (boundary != 0)
-        fa.mboundary = boundary;
-    else
-        fa.mboundary = MBOUNDARY_DEF;
-    if (block_size != 0)
-        fa.fbsize = block_size;
-    else
-        fa.fbsize = FBSIZE_DEF;
-    if (cbuf_size != 0)
-        fa.cbsize = cbuf_size;
-    else
-        fa.cbsize = CBSIZE_DEF;
+    if (H5FD__gds_populate_config(boundary, block_size, cbuf_size, &fa) < 0)
+        HGOTO_ERROR(H5E_VFL, H5E_CANTSET, FAIL, "can't initialize driver configuration info")
 
-    /* Set the default to be true for data alignment */
-    fa.must_align = TRUE;
-
-    /* Copy buffer size must be a multiple of file block size */
-    if (fa.cbsize % fa.fbsize != 0)
-        HGOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "copy buffer size must be a multiple of block size")
-
-    ret_value = H5P_set_driver(plist, H5FD_GDS, &fa);
+    ret_value = H5P_set_driver(plist, H5FD_GDS, &fa, NULL);
 
 done:
     FUNC_LEAVE_API(ret_value)
@@ -517,6 +504,53 @@ H5Pget_fapl_gds(hid_t fapl_id, size_t *boundary /*out*/, size_t *block_size /*ou
 done:
     FUNC_LEAVE_API(ret_value)
 } /* end H5Pget_fapl_gds() */
+
+/*-------------------------------------------------------------------------
+ * Function:    H5FD__gds_populate_config
+ *
+ * Purpose:    Populates a H5FD_gds_fapl_t structure with the provided
+ *             values, supplying defaults where values are not provided.
+ *
+ * Return:    Non-negative on success/Negative on failure
+ *
+ *-------------------------------------------------------------------------
+ */
+static herr_t
+H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size, H5FD_gds_fapl_t *fa_out)
+{
+    herr_t ret_value = SUCCEED;
+
+    FUNC_ENTER_STATIC
+
+    HDassert(fa_out);
+
+    HDmemset(fa_out, 0, sizeof(H5FD_gds_fapl_t));
+
+    if (boundary != 0)
+        fa_out->mboundary = boundary;
+    else
+        fa_out->mboundary = MBOUNDARY_DEF;
+
+    if (block_size != 0)
+        fa_out->fbsize = block_size;
+    else
+        fa_out->fbsize = FBSIZE_DEF;
+
+    if (cbuf_size != 0)
+        fa_out->cbsize = cbuf_size;
+    else
+        fa_out->cbsize = CBSIZE_DEF;
+
+    /* Set the default to be true for data alignment */
+    fa_out->must_align = TRUE;
+
+    /* Copy buffer size must be a multiple of file block size */
+    if (fa_out->cbsize % fa_out->fbsize != 0)
+        HGOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "copy buffer size must be a multiple of block size")
+
+done:
+    FUNC_LEAVE_NOAPI(ret_value)
+} /* end H5FD__gds_populate_config() */
 
 /*-------------------------------------------------------------------------
  * Function:  H5FD__gds_fapl_get
@@ -611,6 +645,7 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     int              fd   = (-1);
     H5FD_gds_t *     file = NULL;
     H5FD_gds_fapl_t *fa;
+    H5FD_gds_fapl_t  default_fa;
 #ifdef H5_HAVE_WIN32_API
     HFILE                              filehandle;
     struct _BY_HANDLE_FILE_INFORMATION fileinfo;
@@ -676,8 +711,11 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     /* Get the driver specific information */
     if (NULL == (plist = H5P_object_verify(fapl_id, H5P_FILE_ACCESS)))
         HGOTO_ERROR(H5E_ARGS, H5E_BADTYPE, NULL, "not a file access property list")
-    if (NULL == (fa = (H5FD_gds_fapl_t *)H5P_peek_driver_info(plist)))
-        HGOTO_ERROR(H5E_PLIST, H5E_BADVALUE, NULL, "bad VFL driver info")
+    if (NULL == (fa = (H5FD_gds_fapl_t *)H5P_peek_driver_info(plist))) {
+        if (H5FD__gds_populate_config(0, 0, 0, &default_fa) < 0)
+            HGOTO_ERROR(H5E_VFL, H5E_CANTSET, NULL, "can't initialize driver configuration info")
+        fa = &default_fa;
+    }
 
 #ifdef H5_GDS_SUPPORT
     memset((void *)&cf_descr, 0, sizeof(CUfileDescr_t));
@@ -1816,3 +1854,28 @@ H5FD__gds_unlock(H5FD_t *_file)
 done:
     FUNC_LEAVE_NOAPI(ret_value)
 } /* end H5FD__gds_unlock() */
+
+/*-------------------------------------------------------------------------
+ * Function:    H5FD__gds_delete
+ *
+ * Purpose:     Delete a file
+ *
+ * Return:      SUCCEED/FAIL
+ *
+ *-------------------------------------------------------------------------
+ */
+static herr_t
+H5FD__gds_delete(const char *filename, hid_t H5_ATTR_UNUSED fapl_id)
+{
+    herr_t ret_value = SUCCEED; /* Return value */
+
+    FUNC_ENTER_STATIC
+
+    HDassert(filename);
+
+    if (HDremove(filename) < 0)
+        HSYS_GOTO_ERROR(H5E_VFL, H5E_CANTDELETEFILE, FAIL, "unable to delete file")
+
+done:
+    FUNC_LEAVE_NOAPI(ret_value)
+} /* end H5FD__gds_delete() */
