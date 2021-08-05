@@ -1,14 +1,11 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  * Copyright by The HDF Group.                                               *
- * Copyright by the Board of Trustees of the University of Illinois.         *
  * All rights reserved.                                                      *
  *                                                                           *
- * This file is part of HDF5.  The full HDF5 copyright notice, including     *
- * terms governing use, modification, and redistribution, is contained in    *
- * the COPYING file, which can be found at the root of the source code       *
- * distribution tree, or in https://support.hdfgroup.org/ftp/HDF5/releases.  *
- * If you do not have access to either file, you may request a copy from     *
- * help@hdfgroup.org.                                                        *
+ * This file is part of the HDF5 GDS Virtual File Driver. The full copyright *
+ * notice, including terms governing use, modification, and redistribution,  *
+ * is contained in the COPYING file, which can be found at the root of the   *
+ * source code distribution tree.                                            *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 /*
@@ -21,17 +18,24 @@
  *          buffer.  The main system support this feature is Linux.
  */
 
-#include "H5FDdrvr_module.h" /* This source code file is part of the H5FD driver module */
+#include <fcntl.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "H5private.h"   /* Generic Functions        */
-#include "H5Eprivate.h"  /* Error handling           */
-#include "H5Fprivate.h"  /* File access              */
-#include "H5FDprivate.h" /* File drivers             */
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <cufile.h>
+
+#include <pthread.h>
+
+#include "hdf5.h"
+
 #include "H5FDgds.h"     /* cuda gds file driver     */
-#include "H5FLprivate.h" /* Free Lists               */
-#include "H5Iprivate.h"  /* IDs                      */
-#include "H5MMprivate.h" /* Memory management        */
-#include "H5Pprivate.h"  /* Property lists           */
+#include "H5FDgds_err.h" /* error handling           */
+
+/* HDF5 header for dynamic plugin loading */
+#include <H5PLextern.h>
 
 // #define ADVISE_OS_DISABLE_READ_CACHE
 
@@ -39,16 +43,6 @@
 #include <fcntl.h>
 #endif /* ADVISE_OS_DISABLE_READ_CACHE */
 
-#ifdef H5_GDS_SUPPORT
-
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <cufile.h>
-
-#include <pthread.h>
-#endif
-
-#ifdef H5_GDS_SUPPORT
 typedef struct thread_data_t {
     union {
         void *      rd_devPtr; /* read device address */
@@ -65,10 +59,13 @@ typedef struct thread_data_t {
 static bool cu_file_driver_opened = false;
 
 // static bool reg_once = false;
-#endif
 
 /* The driver identification number, initialized at runtime */
 static hid_t H5FD_GDS_g = 0;
+
+/* Identifiers for HDF5's error API */
+hid_t H5FDgds_err_stack_g = H5I_INVALID_HID;
+hid_t H5FDgds_err_class_g = H5I_INVALID_HID;
 
 /* Whether to ignore file locks when disabled (env var value) */
 static htri_t ignore_disabled_file_locks_s = FAIL;
@@ -77,6 +74,15 @@ static htri_t ignore_disabled_file_locks_s = FAIL;
 #define OP_UNKNOWN 0
 #define OP_READ    1
 #define OP_WRITE   2
+
+/* POSIX I/O mode used as the third parameter to open/_open
+ * when creating a new file (O_CREAT is set).
+ */
+#if defined(H5_HAVE_WIN32_API)
+#define H5FD_GDS_POSIX_CREATE_MODE_RW (_S_IREAD | _S_IWRITE)
+#else
+#define H5FD_GDS_POSIX_CREATE_MODE_RW 0666
+#endif
 
 /* Driver-specific file access properties */
 typedef struct H5FD_gds_fapl_t {
@@ -108,13 +114,11 @@ typedef struct H5FD_gds_t {
     H5FD_gds_fapl_t fa;  /*file access properties  */
     hbool_t         ignore_disabled_file_locks;
 
-#ifdef H5_GDS_SUPPORT
     CUfileHandle_t cf_handle;      /* cufile handle */
     int            num_io_threads; /* number of io threads for cufile */
     size_t         io_block_size;  /* io block size or cufile */
     pthread_t *    threads;
     thread_data_t *td;
-#endif
 
 #ifndef H5_HAVE_WIN32_API
     /*
@@ -160,7 +164,7 @@ read_thread_fn(void *data)
             ret      = cuFileRead(td->cfr_handle, td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
             td->size = 0;
         }
-        HDassert(ret > 0);
+        assert(ret > 0);
     }
 
     // fprintf(stderr, "read success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
@@ -189,7 +193,7 @@ write_thread_fn(void *data)
             ret      = cuFileWrite(td->cfr_handle, td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
             td->size = 0;
         }
-        HDassert(ret > 0);
+        assert(ret > 0);
     }
 
     // printf("wrt success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
@@ -202,7 +206,7 @@ write_thread_fn(void *data)
 
 /*
  * These macros check for overflow of various quantities.  These macros
- * assume that HDoff_t is signed and haddr_t and size_t are unsigned.
+ * assume that off_t is signed and haddr_t and size_t are unsigned.
  *
  * ADDR_OVERFLOW:  Checks whether a file address of type `haddr_t'
  *      is too large to be represented by the second argument
@@ -215,11 +219,11 @@ write_thread_fn(void *data)
  *      which can be addressed entirely by the second
  *      argument of the file seek function.
  */
-#define MAXADDR          (((haddr_t)1 << (8 * sizeof(HDoff_t) - 1)) - 1)
+#define MAXADDR          (((haddr_t)1 << (8 * sizeof(off_t) - 1)) - 1)
 #define ADDR_OVERFLOW(A) (HADDR_UNDEF == (A) || ((A) & ~(haddr_t)MAXADDR))
 #define SIZE_OVERFLOW(Z) ((Z) & ~(hsize_t)MAXADDR)
 #define REGION_OVERFLOW(A, Z)                                                                                \
-    (ADDR_OVERFLOW(A) || SIZE_OVERFLOW(Z) || HADDR_UNDEF == (A) + (Z) || (HDoff_t)((A) + (Z)) < (HDoff_t)(A))
+    (ADDR_OVERFLOW(A) || SIZE_OVERFLOW(Z) || HADDR_UNDEF == (A) + (Z) || (off_t)((A) + (Z)) < (off_t)(A))
 
 /* Prototypes */
 static herr_t  H5FD__gds_term(void);
@@ -282,45 +286,6 @@ static const H5FD_class_t H5FD_gds_g = {
     H5FD_FLMAP_DICHOTOMY     /* fl_map               */
 };
 
-/* Declare a free list to manage the H5FD_gds_t struct */
-H5FL_DEFINE_STATIC(H5FD_gds_t);
-
-/*--------------------------------------------------------------------------
-NAME
-   H5FD__init_package -- Initialize interface-specific information
-USAGE
-    herr_t H5FD__init_package()
-RETURNS
-    Non-negative on success/Negative on failure
-DESCRIPTION
-    Initializes any interface-specific data or routines.  (Just calls
-    H5FD_gds_init currently).
-
---------------------------------------------------------------------------*/
-static herr_t
-H5FD__init_package(void)
-{
-    char * lock_env_var = NULL; /* Environment variable pointer */
-    herr_t ret_value    = SUCCEED;
-
-    FUNC_ENTER_STATIC
-
-    /* Check the use disabled file locks environment variable */
-    lock_env_var = HDgetenv("HDF5_USE_FILE_LOCKING");
-    if (lock_env_var && !HDstrcmp(lock_env_var, "BEST_EFFORT"))
-        ignore_disabled_file_locks_s = TRUE; /* Override: Ignore disabled locks */
-    else if (lock_env_var && (!HDstrcmp(lock_env_var, "TRUE") || !HDstrcmp(lock_env_var, "1")))
-        ignore_disabled_file_locks_s = FALSE; /* Override: Don't ignore disabled locks */
-    else
-        ignore_disabled_file_locks_s = FAIL; /* Environment variable not set, or not set correctly */
-
-    if (H5FD_gds_init() < 0)
-        HGOTO_ERROR(H5E_VFL, H5E_CANTINIT, FAIL, "unable to initialize gds VFD")
-
-done:
-    FUNC_LEAVE_NOAPI(ret_value)
-} /* H5FD__init_package() */
-
 /*-------------------------------------------------------------------------
  * Function:    H5FD_gds_init
  *
@@ -338,17 +303,26 @@ done:
 hid_t
 H5FD_gds_init(void)
 {
-
-#ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     CUfileDescr_t cf_descr;
-#endif
+    char *        lock_env_var = NULL; /* Environment variable pointer */
+    hid_t         ret_value = H5I_INVALID_HID; /* Return value */
 
-    hid_t ret_value = H5I_INVALID_HID; /* Return value */
+    /* Initialize error reporting */
+    if ((H5FDgds_err_stack_g = H5Ecreate_stack()) < 0)
+        H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTINIT, H5I_INVALID_HID, "can't create HDF5 error stack");
+    if ((H5FDgds_err_class_g = H5Eregister_class(H5FD_GDS_ERR_CLS_NAME, H5FD_GDS_ERR_LIB_NAME, H5FD_GDS_ERR_VER)) < 0)
+        H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTINIT, H5I_INVALID_HID, "can't register error class with HDF5 error API");
 
-    FUNC_ENTER_NOAPI(H5I_INVALID_HID)
+    /* Check the use disabled file locks environment variable */
+    lock_env_var = getenv("HDF5_USE_FILE_LOCKING");
+    if (lock_env_var && !strcmp(lock_env_var, "BEST_EFFORT"))
+        ignore_disabled_file_locks_s = TRUE; /* Override: Ignore disabled locks */
+    else if (lock_env_var && (!strcmp(lock_env_var, "TRUE") || !strcmp(lock_env_var, "1")))
+        ignore_disabled_file_locks_s = FALSE; /* Override: Don't ignore disabled locks */
+    else
+        ignore_disabled_file_locks_s = FAIL; /* Environment variable not set, or not set correctly */
 
-#ifdef H5_GDS_SUPPORT
     if (!cu_file_driver_opened) {
         status = cuFileDriverOpen();
 
@@ -356,22 +330,21 @@ H5FD_gds_init(void)
             cu_file_driver_opened = true;
         }
         else {
-            HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, H5I_INVALID_HID, "unable to open cufile driver");
+            H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, H5I_INVALID_HID, "unable to open cufile driver");
             // TODO: get the error string once the cufile c api is ready
             // fprintf(stderr, "cufile driver open error: %s\n",
             //  cuFileGetErrorString(status));
         }
     }
-#endif
 
-    if (H5I_VFL != H5I_get_type(H5FD_GDS_g))
-        H5FD_GDS_g = H5FD_register(&H5FD_gds_g, sizeof(H5FD_class_t), FALSE);
+    if (H5I_VFL != H5Iget_type(H5FD_GDS_g))
+        H5FD_GDS_g = H5FDregister(&H5FD_gds_g);
 
     /* Set return value */
     ret_value = H5FD_GDS_g;
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE;
 } /* end H5FD_gds_init() */
 
 /*---------------------------------------------------------------------------
@@ -389,16 +362,9 @@ done:
 static herr_t
 H5FD__gds_term(void)
 {
-
-#ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     herr_t        ret_value = SUCCEED; /* Return value */
-    FUNC_ENTER_STATIC
-#else
-    FUNC_ENTER_STATIC_NOERR
-#endif
 
-#ifdef H5_GDS_SUPPORT
     if (cu_file_driver_opened) {
         // FIXME: cuFileDriveClose is throwing errors with h5py and cupy
         // status = cuFileDriverClose();
@@ -406,24 +372,36 @@ H5FD__gds_term(void)
         //   cu_file_driver_opened = false;
         // }
         // else {
-        //   HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to close cufile driver")
+        //   H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to close cufile driver");
         //   // TODO: get the error string once the cufile c api is ready
         //   // fprintf(stderr, "cufile driver close failed: %s\n",
         //   //   cuFileGetErrorString(status));
         // }
     }
-#endif
+
+    /* Unregister from HDF5 error API */
+    if (H5FDgds_err_class_g >= 0) {
+        if (H5Eunregister_class(H5FDgds_err_class_g) < 0)
+            H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CLOSEERROR, FAIL, "can't unregister error class from HDF5 error API");
+
+        /* Print the current error stack before destroying it */
+        PRINT_ERROR_STACK;
+
+        /* Destroy the error stack */
+        if (H5Eclose_stack(H5FDgds_err_stack_g) < 0) {
+            H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CLOSEERROR, FAIL, "can't close HDF5 error stack");
+            PRINT_ERROR_STACK;
+        } /* end if */
+
+        H5FDgds_err_stack_g = H5I_INVALID_HID;
+        H5FDgds_err_class_g = H5I_INVALID_HID;
+    } /* end if */
 
     /* Reset VFL ID */
     H5FD_GDS_g = 0;
 
-#ifdef H5_GDS_SUPPORT
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
-#else
-    FUNC_LEAVE_NOAPI(SUCCEED)
-#endif
-
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_term() */
 
 /*-------------------------------------------------------------------------
@@ -435,31 +413,24 @@ done:
  *
  * Return:  Non-negative on success/Negative on failure
  *
- * Programmer:  Raymond Lu
- *    Wednesday, 20 September 2006
- *
  *-------------------------------------------------------------------------
  */
 herr_t
 H5Pset_fapl_gds(hid_t fapl_id, size_t boundary, size_t block_size, size_t cbuf_size)
 {
-    H5P_genplist_t *plist; /* Property list pointer */
     H5FD_gds_fapl_t fa;
     herr_t          ret_value;
 
-    FUNC_ENTER_API(FAIL)
-    H5TRACE4("e", "izzz", fapl_id, boundary, block_size, cbuf_size);
-
-    if (NULL == (plist = H5P_object_verify(fapl_id, H5P_FILE_ACCESS)))
-        HGOTO_ERROR(H5E_ARGS, H5E_BADTYPE, FAIL, "not a file access property list")
+    if (H5I_GENPROP_LST != H5Iget_type(fapl_id) || TRUE != H5Pisa_class(fapl_id, H5P_FILE_ACCESS))
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADTYPE, FAIL, "not a file access property list");
 
     if (H5FD__gds_populate_config(boundary, block_size, cbuf_size, &fa) < 0)
-        HGOTO_ERROR(H5E_VFL, H5E_CANTSET, FAIL, "can't initialize driver configuration info")
+        H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTSET, FAIL, "can't initialize driver configuration info");
 
-    ret_value = H5P_set_driver(plist, H5FD_GDS, &fa, NULL);
+    ret_value = H5Pset_driver(fapl_id, H5FD_GDS, &fa);
 
 done:
-    FUNC_LEAVE_API(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -472,28 +443,32 @@ done:
  *
  *    Failure:  Negative
  *
- * Programmer:  Raymond Lu
- *              Wednesday, October 18, 2006
- *
  *-------------------------------------------------------------------------
  */
 herr_t
 H5Pget_fapl_gds(hid_t fapl_id, size_t *boundary /*out*/, size_t *block_size /*out*/,
                 size_t *cbuf_size /*out*/)
 {
-    H5P_genplist_t *       plist; /* Property list pointer */
     const H5FD_gds_fapl_t *fa;
+    H5FD_gds_fapl_t        default_fa;
     herr_t                 ret_value = SUCCEED; /* Return value */
 
-    FUNC_ENTER_API(FAIL)
-    H5TRACE4("e", "ixxx", fapl_id, boundary, block_size, cbuf_size);
+    if (H5I_GENPROP_LST != H5Iget_type(fapl_id) || TRUE != H5Pisa_class(fapl_id, H5P_FILE_ACCESS))
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADTYPE, FAIL, "not a file access property list");
+    if (H5FD_GDS != H5Pget_driver(fapl_id))
+        H5FD_GDS_GOTO_ERROR(H5E_PLIST, H5E_BADVALUE, FAIL, "incorrect VFL driver");
+    H5E_BEGIN_TRY
+    {
+        fa = H5Pget_driver_info(fapl_id);
+    }
+    H5E_END_TRY;
+    if (!fa || (H5P_FILE_ACCESS_DEFAULT == fapl_id)) {
+        if (H5FD__gds_populate_config(0, 0, 0, &default_fa) < 0)
+            H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTSET, FAIL, "can't initialize driver configuration info");
 
-    if (NULL == (plist = H5P_object_verify(fapl_id, H5P_FILE_ACCESS)))
-        HGOTO_ERROR(H5E_ARGS, H5E_BADTYPE, FAIL, "not a file access list")
-    if (H5FD_GDS != H5P_peek_driver(plist))
-        HGOTO_ERROR(H5E_PLIST, H5E_BADVALUE, FAIL, "incorrect VFL driver")
-    if (NULL == (fa = H5P_peek_driver_info(plist)))
-        HGOTO_ERROR(H5E_PLIST, H5E_BADVALUE, FAIL, "bad VFL driver info")
+        fa = &default_fa;
+    }
+
     if (boundary)
         *boundary = fa->mboundary;
     if (block_size)
@@ -502,7 +477,7 @@ H5Pget_fapl_gds(hid_t fapl_id, size_t *boundary /*out*/, size_t *block_size /*ou
         *cbuf_size = fa->cbsize;
 
 done:
-    FUNC_LEAVE_API(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5Pget_fapl_gds() */
 
 /*-------------------------------------------------------------------------
@@ -520,11 +495,9 @@ H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size, 
 {
     herr_t ret_value = SUCCEED;
 
-    FUNC_ENTER_STATIC
+    assert(fa_out);
 
-    HDassert(fa_out);
-
-    HDmemset(fa_out, 0, sizeof(H5FD_gds_fapl_t));
+    memset(fa_out, 0, sizeof(H5FD_gds_fapl_t));
 
     if (boundary != 0)
         fa_out->mboundary = boundary;
@@ -546,10 +519,10 @@ H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size, 
 
     /* Copy buffer size must be a multiple of file block size */
     if (fa_out->cbsize % fa_out->fbsize != 0)
-        HGOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "copy buffer size must be a multiple of block size")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "copy buffer size must be a multiple of block size");
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE;
 } /* end H5FD__gds_populate_config() */
 
 /*-------------------------------------------------------------------------
@@ -564,9 +537,6 @@ done:
  *
  *    Failure:  NULL
  *
- * Programmer:  Raymond Lu
- *              Wednesday, 18 October 2006
- *
  *-------------------------------------------------------------------------
  */
 static void *
@@ -575,13 +545,11 @@ H5FD__gds_fapl_get(H5FD_t *_file)
     H5FD_gds_t *file = (H5FD_gds_t *)_file;
     void *      ret_value; /* Return value */
 
-    FUNC_ENTER_STATIC
-
     /* Set return value */
     ret_value = H5FD__gds_fapl_copy(&(file->fa));
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_fapl_get() */
 
 /*-------------------------------------------------------------------------
@@ -593,25 +561,23 @@ done:
  *
  *    Failure:  NULL
  *
- * Programmer:  Raymond Lu
- *              Wednesday, 18 October 2006
- *
  *-------------------------------------------------------------------------
  */
 static void *
 H5FD__gds_fapl_copy(const void *_old_fa)
 {
     const H5FD_gds_fapl_t *old_fa = (const H5FD_gds_fapl_t *)_old_fa;
-    H5FD_gds_fapl_t *      new_fa = H5MM_calloc(sizeof(H5FD_gds_fapl_t));
+    H5FD_gds_fapl_t *      new_fa = calloc(1, sizeof(H5FD_gds_fapl_t));
+    void *                 ret_value = NULL;
 
-    FUNC_ENTER_STATIC_NOERR
-
-    HDassert(new_fa);
+    assert(new_fa);
 
     /* Copy the general information */
-    H5MM_memcpy(new_fa, old_fa, sizeof(H5FD_gds_fapl_t));
+    memcpy(new_fa, old_fa, sizeof(H5FD_gds_fapl_t));
 
-    FUNC_LEAVE_NOAPI(new_fa)
+    ret_value = new_fa;
+
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_fapl_copy() */
 
 /*-------------------------------------------------------------------------
@@ -633,13 +599,10 @@ H5FD__gds_fapl_copy(const void *_old_fa)
 static H5FD_t *
 H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 {
-
-#ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     CUfileDescr_t cf_descr;
     char *        num_io_threads_var;
     char *        io_block_size_var;
-#endif
 
     int              o_flags;
     int              fd   = (-1);
@@ -650,23 +613,20 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     HFILE                              filehandle;
     struct _BY_HANDLE_FILE_INFORMATION fileinfo;
 #endif
-    h5_stat_t       sb;
-    H5P_genplist_t *plist; /* Property list */
+    struct stat     sb;
     void *          buf1, *buf2;
     H5FD_t *        ret_value = NULL;
 
-    FUNC_ENTER_STATIC
-
     /* Sanity check on file offsets */
-    HDassert(sizeof(HDoff_t) >= sizeof(size_t));
+    assert(sizeof(off_t) >= sizeof(size_t));
 
     /* Check arguments */
     if (!name || !*name)
-        HGOTO_ERROR(H5E_ARGS, H5E_BADVALUE, NULL, "invalid file name")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, NULL, "invalid file name");
     if (0 == maxaddr || HADDR_UNDEF == maxaddr)
-        HGOTO_ERROR(H5E_ARGS, H5E_BADRANGE, NULL, "bogus maxaddr")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADRANGE, NULL, "bogus maxaddr");
     if (ADDR_OVERFLOW(maxaddr))
-        HGOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, NULL, "bogus maxaddr")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, NULL, "bogus maxaddr");
 
     /* Build the open flags */
     o_flags = (H5F_ACC_RDWR & flags) ? O_RDWR : O_RDONLY;
@@ -681,11 +641,11 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     o_flags |= O_DIRECT;
 
     /* Open the file */
-    if ((fd = HDopen(name, o_flags, H5_POSIX_CREATE_MODE_RW)) < 0)
-        HSYS_GOTO_ERROR(H5E_FILE, H5E_CANTOPENFILE, NULL, "unable to open file")
+    if ((fd = open(name, o_flags, H5FD_GDS_POSIX_CREATE_MODE_RW)) < 0)
+        H5FD_GDS_SYS_GOTO_ERROR(H5E_FILE, H5E_CANTOPENFILE, NULL, "unable to open file");
 
-    if (HDfstat(fd, &sb) < 0)
-        HSYS_GOTO_ERROR(H5E_FILE, H5E_BADFILE, NULL, "unable to fstat file")
+    if (fstat(fd, &sb) < 0)
+        H5FD_GDS_SYS_GOTO_ERROR(H5E_FILE, H5E_BADFILE, NULL, "unable to fstat file");
 
 #ifdef ADVISE_OS_DISABLE_READ_CACHE
     if (posix_fadvise(fd, 0, 0, POSIX_FADV_RANDOM) != 0) {
@@ -705,25 +665,27 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 #endif /* ADVISE_OS_DISABLE_READ_CACHE */
 
     /* Create the new file struct */
-    if (NULL == (file = H5FL_CALLOC(H5FD_gds_t)))
-        HGOTO_ERROR(H5E_RESOURCE, H5E_NOSPACE, NULL, "unable to allocate file struct")
+    if (NULL == (file = calloc(1, sizeof(H5FD_gds_t))))
+        H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_NOSPACE, NULL, "unable to allocate file struct");
 
     /* Get the driver specific information */
-    if (NULL == (plist = H5P_object_verify(fapl_id, H5P_FILE_ACCESS)))
-        HGOTO_ERROR(H5E_ARGS, H5E_BADTYPE, NULL, "not a file access property list")
-    if (NULL == (fa = (H5FD_gds_fapl_t *)H5P_peek_driver_info(plist))) {
+    H5E_BEGIN_TRY
+    {
+        fa = H5Pget_driver_info(fapl_id);
+    }
+    H5E_END_TRY;
+    if (!fa || (H5P_FILE_ACCESS_DEFAULT == fapl_id)) {
         if (H5FD__gds_populate_config(0, 0, 0, &default_fa) < 0)
-            HGOTO_ERROR(H5E_VFL, H5E_CANTSET, NULL, "can't initialize driver configuration info")
+            H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTSET, NULL, "can't initialize driver configuration info");
         fa = &default_fa;
     }
 
-#ifdef H5_GDS_SUPPORT
     memset((void *)&cf_descr, 0, sizeof(CUfileDescr_t));
     cf_descr.handle.fd = fd;
     cf_descr.type      = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
     status             = cuFileHandleRegister(&file->cf_handle, &cf_descr);
     if (status.err != CU_FILE_SUCCESS) {
-        HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to register file with cufile driver");
+        H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to register file with cufile driver");
     }
 
     // DEFAULT io worker params
@@ -748,13 +710,14 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 
     /* IOThreads */
     // TODO: POSSIBLE MEMORY LEAK! figure out how to deal with the the double open H5Fint does
-    file->td      = (thread_data_t *)HDmalloc((unsigned)file->num_io_threads * sizeof(thread_data_t));
-    file->threads = (pthread_t *)HDmalloc((unsigned)file->num_io_threads * sizeof(pthread_t));
-#endif
-    // TODO: add error print for #elseif
+    file->td      = (thread_data_t *)malloc((unsigned)file->num_io_threads * sizeof(thread_data_t));
+    file->threads = (pthread_t *)malloc((unsigned)file->num_io_threads * sizeof(pthread_t));
 
     file->fd = fd;
-    H5_CHECKED_ASSIGN(file->eof, haddr_t, sb.st_size, h5_stat_size_t);
+
+    /* FIXME: Possible overflow! */
+    file->eof = (haddr_t)sb.st_size;
+
     file->pos = HADDR_UNDEF;
     file->op  = OP_UNKNOWN;
 #ifdef H5_HAVE_WIN32_API
@@ -776,47 +739,47 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         file->ignore_disabled_file_locks = ignore_disabled_file_locks_s;
     else {
         /* Use the value in the property list */
-        if (H5P_get(plist, H5F_ACS_IGNORE_DISABLED_FILE_LOCKS_NAME, &file->ignore_disabled_file_locks) < 0)
-            HGOTO_ERROR(H5E_VFL, H5E_CANTGET, NULL, "can't get ignore disabled file locks property")
+        if (H5Pget_file_locking(fapl_id, NULL, &file->ignore_disabled_file_locks) < 0)
+            H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTGET, NULL, "can't get ignore disabled file locks property");
     }
 
     /* Try to decide if data alignment is required.  The reason to check it here
      * is to handle correctly the case that the file is in a different file system
      * than the one where the program is running.
      */
-    /* NOTE: Use HDmalloc and HDfree here to ensure compatibility with
-     *       HDposix_memalign.
+    /* NOTE: Use malloc and free here to ensure compatibility with
+     *       posix_memalign.
      */
-    buf1 = HDmalloc(sizeof(int));
-    if (HDposix_memalign(&buf2, file->fa.mboundary, file->fa.fbsize) != 0)
-        HGOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, NULL, "HDposix_memalign failed")
+    buf1 = malloc(sizeof(int));
+    if (posix_memalign(&buf2, file->fa.mboundary, file->fa.fbsize) != 0)
+        H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, NULL, "posix_memalign failed");
 
     if (o_flags & O_CREAT) {
-        if (HDwrite(file->fd, buf1, sizeof(int)) < 0) {
-            if (HDwrite(file->fd, buf2, file->fa.fbsize) < 0)
-                HGOTO_ERROR(H5E_FILE, H5E_WRITEERROR, NULL,
-                            "file system may not support GPUDirect Storage I/O")
+        if (write(file->fd, buf1, sizeof(int)) < 0) {
+            if (write(file->fd, buf2, file->fa.fbsize) < 0)
+                H5FD_GDS_GOTO_ERROR(H5E_FILE, H5E_WRITEERROR, NULL,
+                            "file system may not support GPUDirect Storage I/O");
             else
                 file->fa.must_align = TRUE;
         }
         else {
             file->fa.must_align = FALSE;
-            HDftruncate(file->fd, (HDoff_t)0);
+            ftruncate(file->fd, (off_t)0);
         }
     }
     else {
-        if (HDread(file->fd, buf1, sizeof(int)) < 0) {
-            if (HDread(file->fd, buf2, file->fa.fbsize) < 0)
-                HGOTO_ERROR(H5E_FILE, H5E_READERROR, NULL,
-                            "file system may not support GPUDirect Storage I/O")
+        if (read(file->fd, buf1, sizeof(int)) < 0) {
+            if (read(file->fd, buf2, file->fa.fbsize) < 0)
+                H5FD_GDS_GOTO_ERROR(H5E_FILE, H5E_READERROR, NULL,
+                            "file system may not support GPUDirect Storage I/O");
             else
                 file->fa.must_align = TRUE;
         }
         else {
             if (o_flags & O_RDWR) {
-                if (HDlseek(file->fd, (HDoff_t)0, SEEK_SET) < 0)
-                    HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, NULL, "unable to seek to proper position")
-                if (HDwrite(file->fd, buf1, sizeof(int)) < 0)
+                if (lseek(file->fd, (off_t)0, SEEK_SET) < 0)
+                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, NULL, "unable to seek to proper position");
+                if (write(file->fd, buf1, sizeof(int)) < 0)
                     file->fa.must_align = TRUE;
                 else
                     file->fa.must_align = FALSE;
@@ -827,9 +790,9 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     }
 
     if (buf1)
-        HDfree(buf1);
+        free(buf1);
     if (buf2)
-        HDfree(buf2);
+        free(buf2);
 
     /* Set return value */
     ret_value = (H5FD_t *)file;
@@ -837,10 +800,10 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 done:
     if (ret_value == NULL) {
         if (fd >= 0)
-            HDclose(fd);
+            close(fd);
     } /* end if */
 
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -860,32 +823,25 @@ done:
 static herr_t
 H5FD__gds_close(H5FD_t *_file)
 {
-
     H5FD_gds_t *file      = (H5FD_gds_t *)_file;
     herr_t      ret_value = SUCCEED; /* Return value */
 
-    FUNC_ENTER_STATIC
-
-#ifdef H5_GDS_SUPPORT
     // close file handle
     cuFileHandleDeregister(file->cf_handle);
-#endif
 
-    if (HDclose(file->fd) < 0)
-        HSYS_GOTO_ERROR(H5E_IO, H5E_CANTCLOSEFILE, FAIL, "unable to close file")
+    if (close(file->fd) < 0)
+        H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_CANTCLOSEFILE, FAIL, "unable to close file");
 
-#ifdef H5_GDS_SUPPORT
     if (file->td)
-        HDfree(file->td);
+        free(file->td);
 
     if (file->threads)
-        HDfree(file->threads);
-#endif
+        free(file->threads);
 
-    H5FL_FREE(H5FD_gds_t, file);
+    free(file);
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -899,9 +855,6 @@ done:
  *    Failure:  never fails (arguments were checked by the
  *        caller).
  *
- * Programmer:  Raymond Lu
- *              Thursday, 21 September 2006
- *
  *-------------------------------------------------------------------------
  */
 static int
@@ -911,45 +864,43 @@ H5FD__gds_cmp(const H5FD_t *_f1, const H5FD_t *_f2)
     const H5FD_gds_t *f2        = (const H5FD_gds_t *)_f2;
     int               ret_value = 0;
 
-    FUNC_ENTER_STATIC_NOERR
-
 #ifdef H5_HAVE_WIN32_API
     if (f1->fileindexhi < f2->fileindexhi)
-        HGOTO_DONE(-1)
+        H5FD_GDS_GOTO_DONE(-1);
     if (f1->fileindexhi > f2->fileindexhi)
-        HGOTO_DONE(1)
+        H5FD_GDS_GOTO_DONE(1);
 
     if (f1->fileindexlo < f2->fileindexlo)
-        HGOTO_DONE(-1)
+        H5FD_GDS_GOTO_DONE(-1);
     if (f1->fileindexlo > f2->fileindexlo)
-        HGOTO_DONE(1)
+        H5FD_GDS_GOTO_DONE(1);
 
 #else
 #ifdef H5_DEV_T_IS_SCALAR
     if (f1->device < f2->device)
-        HGOTO_DONE(-1)
+        H5FD_GDS_GOTO_DONE(-1);
     if (f1->device > f2->device)
-        HGOTO_DONE(1)
+        H5FD_GDS_GOTO_DONE(1);
 #else  /* H5_DEV_T_IS_SCALAR */
     /* If dev_t isn't a scalar value on this system, just use memcmp to
      * determine if the values are the same or not.  The actual return value
      * shouldn't really matter...
      */
-    if (HDmemcmp(&(f1->device), &(f2->device), sizeof(dev_t)) < 0)
-        HGOTO_DONE(-1)
-    if (HDmemcmp(&(f1->device), &(f2->device), sizeof(dev_t)) > 0)
-        HGOTO_DONE(1)
+    if (memcmp(&(f1->device), &(f2->device), sizeof(dev_t)) < 0)
+        H5FD_GDS_GOTO_DONE(-1);
+    if (memcmp(&(f1->device), &(f2->device), sizeof(dev_t)) > 0)
+        H5FD_GDS_GOTO_DONE(1);
 #endif /* H5_DEV_T_IS_SCALAR */
 
     if (f1->inode < f2->inode)
-        HGOTO_DONE(-1)
+        H5FD_GDS_GOTO_DONE(-1);
     if (f1->inode > f2->inode)
-        HGOTO_DONE(1)
+        H5FD_GDS_GOTO_DONE(1);
 
 #endif
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -968,9 +919,9 @@ done:
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5FD__gds_query(const H5FD_t H5_ATTR_UNUSED *_f, unsigned long *flags /* out */)
+H5FD__gds_query(const H5FD_t *_f, unsigned long *flags /* out */)
 {
-    FUNC_ENTER_STATIC_NOERR
+    herr_t ret_value = SUCCEED;
 
     /* Set the VFL feature flags that this driver supports */
     if (flags) {
@@ -984,7 +935,7 @@ H5FD__gds_query(const H5FD_t H5_ATTR_UNUSED *_f, unsigned long *flags /* out */)
                                                        VFD      */
     }
 
-    FUNC_LEAVE_NOAPI(SUCCEED)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -998,19 +949,19 @@ H5FD__gds_query(const H5FD_t H5_ATTR_UNUSED *_f, unsigned long *flags /* out */)
  *
  *    Failure:  HADDR_UNDEF
  *
- * Programmer:  Raymond Lu
- *              Wednesday, 20 September 2006
- *
  *-------------------------------------------------------------------------
  */
 static haddr_t
-H5FD__gds_get_eoa(const H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type)
+H5FD__gds_get_eoa(const H5FD_t *_file, H5FD_mem_t type)
 {
     const H5FD_gds_t *file = (const H5FD_gds_t *)_file;
+    haddr_t           ret_value = HADDR_UNDEF;
 
-    FUNC_ENTER_STATIC_NOERR
+    assert(file);
 
-    FUNC_LEAVE_NOAPI(file->eoa)
+    ret_value = file->eoa;
+
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -1024,21 +975,17 @@ H5FD__gds_get_eoa(const H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type)
  *
  *    Failure:  -1
  *
- * Programmer:  Raymond Lu
- *              Wednesday, 20 September 2006
- *
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5FD__gds_set_eoa(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, haddr_t addr)
+H5FD__gds_set_eoa(H5FD_t *_file, H5FD_mem_t type, haddr_t addr)
 {
     H5FD_gds_t *file = (H5FD_gds_t *)_file;
-
-    FUNC_ENTER_STATIC_NOERR
+    herr_t      ret_value = SUCCEED;
 
     file->eoa = addr;
 
-    FUNC_LEAVE_NOAPI(SUCCEED)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -1054,19 +1001,19 @@ H5FD__gds_set_eoa(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, haddr_t addr)
  *
  *    Failure:  HADDR_UNDEF
  *
- * Programmer:  Raymond Lu
- *              Wednesday, 20 September 2006
- *
  *-------------------------------------------------------------------------
  */
 static haddr_t
-H5FD__gds_get_eof(const H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type)
+H5FD__gds_get_eof(const H5FD_t *_file, H5FD_mem_t type)
 {
     const H5FD_gds_t *file = (const H5FD_gds_t *)_file;
+    haddr_t           ret_value = HADDR_UNDEF;
 
-    FUNC_ENTER_STATIC
+    assert(file);
 
-    FUNC_LEAVE_NOAPI(file->eof)
+    ret_value = file->eof;
+
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -1076,25 +1023,20 @@ H5FD__gds_get_eof(const H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type)
  *
  * Returns:        Non-negative if succeed or negative if fails.
  *
- * Programmer:     Raymond Lu
- *                 21 September 2006
- *
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5FD__gds_get_handle(H5FD_t *_file, hid_t H5_ATTR_UNUSED fapl, void **file_handle)
+H5FD__gds_get_handle(H5FD_t *_file, hid_t fapl, void **file_handle)
 {
     H5FD_gds_t *file      = (H5FD_gds_t *)_file;
     herr_t      ret_value = SUCCEED;
 
-    FUNC_ENTER_STATIC
-
     if (!file_handle)
-        HGOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "file handle not valid")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "file handle not valid");
     *file_handle = &(file->fd);
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 bool is_device_pointer(const void *ptr);
@@ -1129,7 +1071,7 @@ is_device_pointer(const void *ptr)
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUSED dxpl_id, haddr_t addr,
+H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                size_t size, void *buf /*out*/)
 {
     H5FD_gds_t *file = (H5FD_gds_t *)_file;
@@ -1145,41 +1087,36 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
     size_t      copy_size = size; /* Size remaining to read when using copy buffer */
     size_t      copy_offset;      /* Offset into copy buffer of the requested data */
 
-#ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     ssize_t       ret        = -1;
     int           io_threads = file->num_io_threads;
     int           block_size = file->io_block_size;
 
-    HDoff_t offset = (HDoff_t)addr;
+    off_t offset = (off_t)addr;
     ssize_t io_chunk;
     ssize_t io_chunk_rem;
-#endif
 
-    FUNC_ENTER_STATIC
-
-    HDassert(file && file->pub.cls);
-    HDassert(buf);
+    assert(file && file->pub.cls);
+    assert(buf);
 
     /* Check for overflow conditions */
     if (HADDR_UNDEF == addr)
-        HGOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "addr undefined")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "addr undefined");
     if (REGION_OVERFLOW(addr, size))
-        HGOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
-#ifdef H5_GDS_SUPPORT
     if (is_device_pointer(buf)) {
         // TODO: register device memory only once
         // if (!reg_once) {
         //   status = cuFileBufRegister(buf, size, 0);
         //   if (status.err != CU_FILE_SUCCESS) {
-        //     HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+        //     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
         //   }
         //   reg_once = true;
         // }
 
         if (io_threads > 0) {
-            HDassert(size != 0);
+            assert(size != 0);
 
             // make each thread access at least a 4K page
             if ((1 + (size - 1) / 4096) < (unsigned)io_threads) {
@@ -1216,17 +1153,16 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
         }
         else {
             ret = cuFileRead(file->cf_handle, buf, size, offset, 0);
-            HDassert(ret > 0);
+            assert(ret > 0);
         }
 
         // TODO: deregister device memory only once
         // status = cuFileBufDeregister(buf);
         // if (status.err != CU_FILE_SUCCESS) {
-        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+        // H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
         // }
     }
     else {
-#endif
         /* If the system doesn't require data to be aligned, read the data in
          * the same way as sec2 driver.
          */
@@ -1246,26 +1182,32 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
         if (!_must_align ||
             ((addr % _fbsize == 0) && (size % _fbsize == 0) && ((size_t)buf % _boundary == 0))) {
             /* Seek to the correct location */
-            if ((addr != file->pos || OP_READ != file->op) && HDlseek(file->fd, (HDoff_t)addr, SEEK_SET) < 0)
-                HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position")
+            if ((addr != file->pos || OP_READ != file->op) && lseek(file->fd, (off_t)addr, SEEK_SET) < 0)
+                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
             /* Read the aligned data in file first, being careful of interrupted
              * system calls and partial results. */
             while (size > 0) {
                 do {
-                    nbytes = HDread(file->fd, buf, size);
+                    nbytes = read(file->fd, buf, size);
                 } while (-1 == nbytes && EINTR == errno);
                 if (-1 == nbytes) /* error */
-                    HSYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed")
+                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed");
                 if (0 == nbytes) {
                     /* end of file but not end of format address space */
-                    HDmemset(buf, 0, size);
+                    memset(buf, 0, size);
                     break;
                 }
-                HDassert(nbytes >= 0);
-                HDassert((size_t)nbytes <= size);
-                H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t);
+                assert(nbytes >= 0);
+                assert((size_t)nbytes <= size);
+
+                /* FIXME */
+                // H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t);
+
                 size -= (size_t)nbytes;
-                H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t);
+
+                /* FIXME */
+                // H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t);
+
                 addr += (haddr_t)nbytes;
                 buf = (char *)buf + nbytes;
             }
@@ -1280,14 +1222,14 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
             alloc_size = ((copy_offset + size - 1) / _fbsize + 1) * _fbsize;
             if (alloc_size > _cbsize)
                 alloc_size = _cbsize;
-            HDassert(!(alloc_size % _fbsize));
-            if (HDposix_memalign(&copy_buf, _boundary, alloc_size) != 0)
-                HGOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, FAIL, "HDposix_memalign failed")
+            assert(!(alloc_size % _fbsize));
+            if (posix_memalign(&copy_buf, _boundary, alloc_size) != 0)
+                H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, FAIL, "posix_memalign failed");
 
             /* look for the aligned position for reading the data */
-            HDassert(!(((addr / _fbsize) * _fbsize) % _fbsize));
-            if (HDlseek(file->fd, (HDoff_t)((addr / _fbsize) * _fbsize), SEEK_SET) < 0)
-                HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position")
+            assert(!(((addr / _fbsize) * _fbsize) % _fbsize));
+            if (lseek(file->fd, (off_t)((addr / _fbsize) * _fbsize), SEEK_SET) < 0)
+                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
 
             /*
              * Read the aligned data in file into aligned buffer first, then copy the data
@@ -1300,7 +1242,7 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
                  * system calls and partial results like sec2 driver does because the
                  * data may no longer be aligned. It's especially true when the data in
                  * file is smaller than ALLOC_SIZE. */
-                HDmemset(copy_buf, 0, alloc_size);
+                memset(copy_buf, 0, alloc_size);
 
                 /* Calculate how much data we have to read in this iteration
                  * (including unused parts of blocks) */
@@ -1309,13 +1251,13 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
                 else
                     read_size = alloc_size;
 
-                HDassert(!(read_size % _fbsize));
+                assert(!(read_size % _fbsize));
                 do {
-                    nbytes = HDread(file->fd, copy_buf, read_size);
+                    nbytes = read(file->fd, copy_buf, read_size);
                 } while (-1 == nbytes && EINTR == errno);
 
                 if (-1 == nbytes) /* error */
-                    HSYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed")
+                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed");
 
                 /* Copy the needed data from the copy buffer to the output
                  * buffer, and update copy_size.  If the copy buffer does not
@@ -1324,12 +1266,12 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
                  * next section of data. */
                 p2 = (unsigned char *)copy_buf + copy_offset;
                 if ((copy_size + copy_offset) <= alloc_size) {
-                    H5MM_memcpy(buf, p2, copy_size);
+                    memcpy(buf, p2, copy_size);
                     buf       = (unsigned char *)buf + copy_size;
                     copy_size = 0;
                 } /* end if */
                 else {
-                    H5MM_memcpy(buf, p2, alloc_size - copy_offset);
+                    memcpy(buf, p2, alloc_size - copy_offset);
                     buf = (unsigned char *)buf + alloc_size - copy_offset;
                     copy_size -= alloc_size - copy_offset;
                     copy_offset = 0;
@@ -1340,8 +1282,8 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
             addr = (haddr_t)(((addr + size - 1) / _fbsize + 1) * _fbsize);
 
             if (copy_buf) {
-                /* Free with HDfree since it came from posix_memalign */
-                HDfree(copy_buf);
+                /* Free with free since it came from posix_memalign */
+                free(copy_buf);
                 copy_buf = NULL;
             } /* end if */
         }
@@ -1349,22 +1291,20 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUS
         /* Update current position */
         file->pos = addr;
         file->op  = OP_READ;
-#ifdef H5_GDS_SUPPORT
     }
-#endif
 
 done:
     if (ret_value < 0) {
-        /* Free with HDfree since it came from posix_memalign */
+        /* Free with free since it came from posix_memalign */
         if (copy_buf)
-            HDfree(copy_buf);
+            free(copy_buf);
 
         /* Reset last file I/O information */
         file->pos = HADDR_UNDEF;
         file->op  = OP_UNKNOWN;
     } /* end if */
 
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -1389,7 +1329,7 @@ done:
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNUSED dxpl_id, haddr_t addr,
+H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                 size_t size, const void *buf)
 {
     H5FD_gds_t *file = (H5FD_gds_t *)_file;
@@ -1408,7 +1348,6 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
     size_t      copy_size = size; /* Size remaining to write when using copy buffer */
     size_t      copy_offset;      /* Offset into copy buffer of the data to write */
 
-#ifdef H5_GDS_SUPPORT
     CUfileError_t status;
     ssize_t       ret        = -1;
     int           io_threads = file->num_io_threads;
@@ -1417,33 +1356,29 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
     ssize_t io_chunk;
     ssize_t io_chunk_rem;
 
-    HDoff_t offset = (HDoff_t)addr;
-#endif
+    off_t offset = (off_t)addr;
 
-    FUNC_ENTER_STATIC
-
-    HDassert(file && file->pub.cls);
-    HDassert(buf);
+    assert(file && file->pub.cls);
+    assert(buf);
 
     /* Check for overflow conditions */
     if (HADDR_UNDEF == addr)
-        HGOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "addr undefined")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "addr undefined");
     if (REGION_OVERFLOW(addr, size))
-        HGOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow")
+        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
-#ifdef H5_GDS_SUPPORT
     if (is_device_pointer(buf)) {
         // TODO: register device memory only once
         // if (!reg_once) {
         //   status = cuFileBufRegister(buf, size, 0);
         //   if (status.err != CU_FILE_SUCCESS) {
-        //     HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+        //     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
         //   }
         //   reg_once = true;
         // }
 
         if (io_threads > 0) {
-            HDassert(size != 0);
+            assert(size != 0);
 
             // make each thread access at least a 4K page
             if ((1 + (size - 1) / 4096) < (unsigned)io_threads) {
@@ -1481,17 +1416,16 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
         else {
             // FIXME: max xfer size, need to batch transfers
             ret = cuFileWrite(file->cf_handle, buf, size, offset, 0);
-            HDassert(ret > 0);
+            assert(ret > 0);
         }
 
         // TODO: deregister device memory only once
         // status = cuFileBufDeregister(buf);
         // if (status.err != CU_FILE_SUCCESS) {
-        // HGOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+        // H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
         // }
     }
     else {
-#endif
         /* If the system doesn't require data to be aligned, read the data in
          * the same way as sec2 driver.
          */
@@ -1511,20 +1445,26 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
         if (!_must_align ||
             ((addr % _fbsize == 0) && (size % _fbsize == 0) && ((size_t)buf % _boundary == 0))) {
             /* Seek to the correct location */
-            if ((addr != file->pos || OP_WRITE != file->op) && HDlseek(file->fd, (HDoff_t)addr, SEEK_SET) < 0)
-                HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position")
+            if ((addr != file->pos || OP_WRITE != file->op) && lseek(file->fd, (off_t)addr, SEEK_SET) < 0)
+                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
 
             while (size > 0) {
                 do {
-                    nbytes = HDwrite(file->fd, buf, size);
+                    nbytes = write(file->fd, buf, size);
                 } while (-1 == nbytes && EINTR == errno);
                 if (-1 == nbytes) /* error */
-                    HSYS_GOTO_ERROR(H5E_IO, H5E_WRITEERROR, FAIL, "file write failed")
-                HDassert(nbytes > 0);
-                HDassert((size_t)nbytes <= size);
-                H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t);
+                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_WRITEERROR, FAIL, "file write failed");
+                assert(nbytes > 0);
+                assert((size_t)nbytes <= size);
+
+                /* FIXME */
+                // H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t);
+
                 size -= (size_t)nbytes;
-                H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t);
+
+                /* FIXME */
+                // H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t);
+
                 addr += (haddr_t)nbytes;
                 buf = (const char *)buf + nbytes;
             }
@@ -1542,14 +1482,14 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
             alloc_size = ((copy_offset + size - 1) / _fbsize + 1) * _fbsize;
             if (alloc_size > _cbsize)
                 alloc_size = _cbsize;
-            HDassert(!(alloc_size % _fbsize));
+            assert(!(alloc_size % _fbsize));
 
-            if (HDposix_memalign(&copy_buf, _boundary, alloc_size) != 0)
-                HGOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, FAIL, "HDposix_memalign failed")
+            if (posix_memalign(&copy_buf, _boundary, alloc_size) != 0)
+                H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, FAIL, "posix_memalign failed");
 
             /* look for the right position for reading or writing the data */
-            if (HDlseek(file->fd, (HDoff_t)write_addr, SEEK_SET) < 0)
-                HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position")
+            if (lseek(file->fd, (off_t)write_addr, SEEK_SET) < 0)
+                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
 
             p3 = buf;
             do {
@@ -1569,11 +1509,11 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
                  * both ends are misaligned, otherwise only read the block on the
                  * misaligned end.
                  */
-                HDmemset(copy_buf, 0, _fbsize);
+                memset(copy_buf, 0, _fbsize);
 
                 if (copy_offset > 0) {
                     if ((write_addr + write_size) > (addr + size)) {
-                        HDassert((write_addr + write_size) - (addr + size) < _fbsize);
+                        assert((write_addr + write_size) - (addr + size) < _fbsize);
                         read_size = write_size;
                         p1        = copy_buf;
                     } /* end if */
@@ -1583,26 +1523,26 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
                     } /* end else */
                 }     /* end if */
                 else if ((write_addr + write_size) > (addr + size)) {
-                    HDassert((write_addr + write_size) - (addr + size) < _fbsize);
+                    assert((write_addr + write_size) - (addr + size) < _fbsize);
                     read_size = _fbsize;
                     p1        = (unsigned char *)copy_buf + write_size - _fbsize;
 
                     /* Seek to the last block, for reading */
-                    HDassert(!((write_addr + write_size - _fbsize) % _fbsize));
-                    if (HDlseek(file->fd, (HDoff_t)(write_addr + write_size - _fbsize), SEEK_SET) < 0)
-                        HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position")
+                    assert(!((write_addr + write_size - _fbsize) % _fbsize));
+                    if (lseek(file->fd, (off_t)(write_addr + write_size - _fbsize), SEEK_SET) < 0)
+                        H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
                 } /* end if */
                 else
                     p1 = NULL;
 
                 if (p1) {
-                    HDassert(!(read_size % _fbsize));
+                    assert(!(read_size % _fbsize));
                     do {
-                        nbytes = HDread(file->fd, p1, read_size);
+                        nbytes = read(file->fd, p1, read_size);
                     } while (-1 == nbytes && EINTR == errno);
 
                     if (-1 == nbytes) /* error */
-                        HSYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed")
+                        H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed");
                 } /* end if */
 
                 /* look for the right position and append or copy the data to be written to
@@ -1613,32 +1553,32 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
                  */
                 p1 = (unsigned char *)copy_buf + copy_offset;
                 if ((copy_size + copy_offset) <= alloc_size) {
-                    H5MM_memcpy(p1, p3, copy_size);
+                    memcpy(p1, p3, copy_size);
                     copy_size = 0;
                 } /* end if */
                 else {
-                    H5MM_memcpy(p1, p3, alloc_size - copy_offset);
+                    memcpy(p1, p3, alloc_size - copy_offset);
                     p3 = (const unsigned char *)p3 + (alloc_size - copy_offset);
                     copy_size -= alloc_size - copy_offset;
                     copy_offset = 0;
                 } /* end else */
 
                 /*look for the aligned position for writing the data*/
-                HDassert(!(write_addr % _fbsize));
-                if (HDlseek(file->fd, (HDoff_t)write_addr, SEEK_SET) < 0)
-                    HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position")
+                assert(!(write_addr % _fbsize));
+                if (lseek(file->fd, (off_t)write_addr, SEEK_SET) < 0)
+                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
 
                 /*
                  * Write the data. It doesn't truncate the extra data introduced by
                  * alignment because that step is done in H5FD_gds_flush.
                  */
-                HDassert(!(write_size % _fbsize));
+                assert(!(write_size % _fbsize));
                 do {
-                    nbytes = HDwrite(file->fd, copy_buf, write_size);
+                    nbytes = write(file->fd, copy_buf, write_size);
                 } while (-1 == nbytes && EINTR == errno);
 
                 if (-1 == nbytes) /* error */
-                    HSYS_GOTO_ERROR(H5E_IO, H5E_WRITEERROR, FAIL, "file write failed")
+                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_WRITEERROR, FAIL, "file write failed");
 
                 /* update the write address */
                 write_addr += write_size;
@@ -1649,8 +1589,8 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
             buf  = (const char *)buf + size;
 
             if (copy_buf) {
-                /* Free with HDfree since it came from posix_memalign */
-                HDfree(copy_buf);
+                /* Free with free since it came from posix_memalign */
+                free(copy_buf);
                 copy_buf = NULL;
             } /* end if */
         }
@@ -1660,22 +1600,20 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t H5_ATTR_UNUSED type, hid_t H5_ATTR_UNU
         file->op  = OP_WRITE;
         if (file->pos > file->eof)
             file->eof = file->pos;
-#ifdef H5_GDS_SUPPORT
     }
-#endif
 
 done:
     if (ret_value < 0) {
-        /* Free with HDfree since it came from posix_memalign */
+        /* Free with free since it came from posix_memalign */
         if (copy_buf)
-            HDfree(copy_buf);
+            free(copy_buf);
 
         /* Reset last file I/O information */
         file->pos = HADDR_UNDEF;
         file->op  = OP_UNKNOWN;
     } /* end if */
 
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 }
 
 /*-------------------------------------------------------------------------
@@ -1700,15 +1638,13 @@ H5FD__gds_flush(H5FD_t *_file, hid_t dxpl_id, hbool_t closing)
     H5FD_gds_t *file      = (H5FD_gds_t *)_file; /* VFD file struct */
     herr_t      ret_value = SUCCEED;             /* Return value */
 
-    FUNC_ENTER_STATIC
-
-    HDassert(file);
+    assert(file);
     if (fsync(file->fd) < 0) {
-        HSYS_GOTO_ERROR(H5E_VFL, H5E_CANTFLUSH, FAIL, "unable perform fsync on file descriptor")
+        H5FD_GDS_SYS_GOTO_ERROR(H5E_VFL, H5E_CANTFLUSH, FAIL, "unable perform fsync on file descriptor");
     }
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_flush() */
 
 /*-------------------------------------------------------------------------
@@ -1721,20 +1657,15 @@ done:
  *
  *    Failure:  Negative
  *
- * Programmer:  Raymond Lu
- *              Thursday, 21 September 2006
- *
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5FD__gds_truncate(H5FD_t *_file, hid_t H5_ATTR_UNUSED dxpl_id, hbool_t H5_ATTR_UNUSED closing)
+H5FD__gds_truncate(H5FD_t *_file, hid_t dxpl_id, hbool_t closing)
 {
     H5FD_gds_t *file      = (H5FD_gds_t *)_file;
     herr_t      ret_value = SUCCEED; /* Return value */
 
-    FUNC_ENTER_STATIC
-
-    HDassert(file);
+    assert(file);
 
     /* Extend the file to make sure it's large enough */
     if (file->eoa != file->eof) {
@@ -1750,10 +1681,10 @@ H5FD__gds_truncate(H5FD_t *_file, hid_t H5_ATTR_UNUSED dxpl_id, hbool_t H5_ATTR_
         li.QuadPart = (LONGLONG)file->eoa;
         (void)SetFilePointer((HANDLE)filehandle, li.LowPart, &li.HighPart, FILE_BEGIN);
         if (SetEndOfFile((HANDLE)filehandle) == 0)
-            HGOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to extend file properly")
+            H5FD_GDS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to extend file properly");
 #else  /* H5_HAVE_WIN32_API */
-        if (-1 == HDftruncate(file->fd, (HDoff_t)file->eoa))
-            HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to extend file properly")
+        if (-1 == ftruncate(file->fd, (off_t)file->eoa))
+            H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to extend file properly");
 #endif /* H5_HAVE_WIN32_API */
 
         /* Update the eof value */
@@ -1767,12 +1698,12 @@ H5FD__gds_truncate(H5FD_t *_file, hid_t H5_ATTR_UNUSED dxpl_id, hbool_t H5_ATTR_
         /*Even though eof is equal to eoa, file is still truncated because GPUDirect Storage I/O
          *write introduces some extra data for alignment.
          */
-        if (-1 == HDftruncate(file->fd, (HDoff_t)file->eof))
-            HSYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to extend file properly")
+        if (-1 == ftruncate(file->fd, (off_t)file->eof))
+            H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to extend file properly");
     }
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_truncate() */
 
 /*-------------------------------------------------------------------------
@@ -1796,15 +1727,13 @@ H5FD__gds_lock(H5FD_t *_file, hbool_t rw)
     int         lock_flags;                 /* file locking flags   */
     herr_t      ret_value = SUCCEED;        /* Return value         */
 
-    FUNC_ENTER_STATIC
-
-    HDassert(file);
+    assert(file);
 
     /* Set exclusive or shared lock based on rw status */
     lock_flags = rw ? LOCK_EX : LOCK_SH;
 
     /* Place a non-blocking lock on the file */
-    if (HDflock(file->fd, lock_flags | LOCK_NB) < 0) {
+    if (flock(file->fd, lock_flags | LOCK_NB) < 0) {
         if (file->ignore_disabled_file_locks && ENOSYS == errno) {
             /* When errno is set to ENOSYS, the file system does not support
              * locking, so ignore it.
@@ -1812,11 +1741,11 @@ H5FD__gds_lock(H5FD_t *_file, hbool_t rw)
             errno = 0;
         }
         else
-            HSYS_GOTO_ERROR(H5E_VFL, H5E_CANTLOCKFILE, FAIL, "unable to lock file")
+            H5FD_GDS_SYS_GOTO_ERROR(H5E_VFL, H5E_CANTLOCKFILE, FAIL, "unable to lock file");
     }
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_lock() */
 
 /*-------------------------------------------------------------------------
@@ -1836,11 +1765,9 @@ H5FD__gds_unlock(H5FD_t *_file)
     H5FD_gds_t *file      = (H5FD_gds_t *)_file; /* VFD file struct */
     herr_t      ret_value = SUCCEED;             /* Return value */
 
-    FUNC_ENTER_STATIC
+    assert(file);
 
-    HDassert(file);
-
-    if (HDflock(file->fd, LOCK_UN) < 0) {
+    if (flock(file->fd, LOCK_UN) < 0) {
         if (file->ignore_disabled_file_locks && ENOSYS == errno) {
             /* When errno is set to ENOSYS, the file system does not support
              * locking, so ignore it.
@@ -1848,11 +1775,11 @@ H5FD__gds_unlock(H5FD_t *_file)
             errno = 0;
         }
         else
-            HSYS_GOTO_ERROR(H5E_VFL, H5E_CANTUNLOCKFILE, FAIL, "unable to unlock file")
+            H5FD_GDS_SYS_GOTO_ERROR(H5E_VFL, H5E_CANTUNLOCKFILE, FAIL, "unable to unlock file");
     }
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_unlock() */
 
 /*-------------------------------------------------------------------------
@@ -1865,17 +1792,29 @@ done:
  *-------------------------------------------------------------------------
  */
 static herr_t
-H5FD__gds_delete(const char *filename, hid_t H5_ATTR_UNUSED fapl_id)
+H5FD__gds_delete(const char *filename, hid_t fapl_id)
 {
     herr_t ret_value = SUCCEED; /* Return value */
 
-    FUNC_ENTER_STATIC
+    assert(filename);
 
-    HDassert(filename);
-
-    if (HDremove(filename) < 0)
-        HSYS_GOTO_ERROR(H5E_VFL, H5E_CANTDELETEFILE, FAIL, "unable to delete file")
+    if (remove(filename) < 0)
+        H5FD_GDS_SYS_GOTO_ERROR(H5E_VFL, H5E_CANTDELETEFILE, FAIL, "unable to delete file");
 
 done:
-    FUNC_LEAVE_NOAPI(ret_value)
+    H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_delete() */
+
+/*
+ * Stub routines for dynamic plugin loading
+ */
+
+H5PL_type_t
+H5PLget_plugin_type(void) {
+    return H5PL_TYPE_VFD;
+}
+
+const void*
+H5PLget_plugin_info(void) {
+    return &H5FD_gds_g;
+}

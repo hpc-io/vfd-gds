@@ -1,14 +1,11 @@
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  * Copyright by The HDF Group.                                               *
- * Copyright by the Board of Trustees of the University of Illinois.         *
  * All rights reserved.                                                      *
  *                                                                           *
- * This file is part of HDF5.  The full HDF5 copyright notice, including     *
- * terms governing use, modification, and redistribution, is contained in    *
- * the COPYING file, which can be found at the root of the source code       *
- * distribution tree, or in https://support.hdfgroup.org/ftp/HDF5/releases.  *
- * If you do not have access to either file, you may request a copy from     *
- * help@hdfgroup.org.                                                        *
+ * This file is part of the HDF5 GDS Virtual File Driver. The full copyright *
+ * notice, including terms governing use, modification, and redistribution,  *
+ * is contained in the COPYING file, which can be found at the root of the   *
+ * source code distribution tree.                                            *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
 /*
@@ -20,13 +17,8 @@
 #ifndef H5FDgds_H
 #define H5FDgds_H
 
-#ifdef H5_GDS_SUPPORT
 #define H5FD_GDS       (H5FD_gds_init())
 #define H5FD_GDS_VALUE 65536
-#else
-#define H5FD_GDS       (-1)
-#define H5FD_GDS_VALUE H5_VFD_INVALID
-#endif /* H5_GDS_SUPPORT */
 
 #define check_cudadrivercall(fn)                                                                             \
     {                                                                                                        \
@@ -51,7 +43,6 @@
         }                                                                                                    \
     }
 
-#ifdef H5_GDS_SUPPORT
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -70,7 +61,5 @@ H5_DLL herr_t H5Pget_fapl_gds(hid_t fapl_id, size_t *boundary /*out*/, size_t *b
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* H5_GDS_SUPPORT */
 
 #endif
