@@ -1,0 +1,42 @@
+#-----------------------------------------------------------------------------
+# hdf5_vfd_gds-config.cmake - HDF5 GDS VFD CMake configuration file for external projects.
+#-----------------------------------------------------------------------------
+set(__hdf5_vfd_gds_install_tree @HDF5_VFD_GDS_CONFIG_INSTALLED@)
+if(__hdf5_vfd_gds_install_tree)
+  get_filename_component(location "${CMAKE_CURRENT_LIST_FILE}" PATH)
+  set(HDF5_VFD_GDS_CONFIG_TARGETS_FILE "${location}/@HDF5_VFD_GDS_PACKAGE@-targets.cmake")
+else()
+  # This is the build location.
+  set(HDF5_VFD_GDS_CONFIG_TARGETS_FILE "@HDF5_VFD_GDS_BINARY_DIR@/src/@HDF5_VFD_GDS_PACKAGE@-targets.cmake")
+endif()
+
+#-----------------------------------------------------------------------------
+# User Options
+#-----------------------------------------------------------------------------
+set(HDF5_VFD_GDS_USE_SYSTEM_HDF5       @HDF5_VFD_GDS_USE_SYSTEM_HDF5@)
+set(HDF5_VFD_GDS_USE_SYSTEM_CMAKE_HDF5 @HDF5_VFD_GDS_USE_SYSTEM_CMAKE_HDF5@)
+
+#-----------------------------------------------------------------------------
+# Version information for HDF5 GDS VFD
+#-----------------------------------------------------------------------------
+set(HDF5_VFD_GDS_VERSION_MAJOR   @HDF5_VFD_GDS_VERSION_MAJOR@)
+set(HDF5_VFD_GDS_VERSION_MINOR   @HDF5_VFD_GDS_VERSION_MINOR@)
+set(HDF5_VFD_GDS_VERSION_PATCH   @HDF5_VFD_GDS_VERSION_PATCH@)
+set(HDF5_VFD_GDS_VERSION_FULL    @HDF5_VFD_GDS_VERSION_FULL@)
+set(HDF5_VFD_GDS_VERSION         @HDF5_VFD_GDS_VERSION@)
+
+#-----------------------------------------------------------------------------
+# Don't include targets if this file is being picked up by another
+# project which has already built the HDF5 GDS VFD as a subproject
+#-----------------------------------------------------------------------------
+if(NOT HDF5_VFD_GDS_INSTALL_SKIP_TARGETS)
+  if(NOT TARGET "hdf5" AND HDF5_VFD_GDS_USE_SYSTEM_CMAKE_HDF5)
+    include(@HDF5_DIR@/hdf5-config.cmake)
+  endif()
+  if(NOT TARGET "@HDF5_VFD_GDS_PACKAGE@")
+    include(${HDF5_VFD_GDS_CONFIG_TARGETS_FILE})
+  endif()
+endif()
+
+# cleanup
+unset(__hdf5_vfd_gds_install_tree)

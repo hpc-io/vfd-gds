@@ -23,6 +23,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <unistd.h>
+#include <sys/file.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cufile.h>
@@ -31,13 +36,24 @@
 
 #include "hdf5.h"
 
+/* HDF5 header for dynamic plugin loading */
+#include "H5PLextern.h"
+
 #include "H5FDgds.h"     /* cuda gds file driver     */
 #include "H5FDgds_err.h" /* error handling           */
 
-/* HDF5 header for dynamic plugin loading */
-#include <H5PLextern.h>
+#define H5FD_GDS (H5FD_gds_init())
 
-// #define ADVISE_OS_DISABLE_READ_CACHE
+/* HDF5 doesn't currently have a driver init callback. Use
+ * macro to initialize driver if loaded as a plugin.
+ */
+#define H5FD_GDS_INIT          \
+do {                           \
+    if (H5FD_GDS_g < 0)        \
+        H5FD_GDS_g = H5FD_GDS; \
+} while(0)
+
+/* #define ADVISE_OS_DISABLE_READ_CACHE */
 
 #ifdef ADVISE_OS_DISABLE_READ_CACHE
 #include <fcntl.h>
@@ -58,10 +74,10 @@ typedef struct thread_data_t {
 
 static bool cu_file_driver_opened = false;
 
-// static bool reg_once = false;
+/* static bool reg_once = false; */
 
 /* The driver identification number, initialized at runtime */
-static hid_t H5FD_GDS_g = 0;
+static hid_t H5FD_GDS_g = H5I_INVALID_HID;
 
 /* Identifiers for HDF5's error API */
 hid_t H5FDgds_err_stack_g = H5I_INVALID_HID;
@@ -150,8 +166,10 @@ read_thread_fn(void *data)
     ssize_t        ret;
     thread_data_t *td = (thread_data_t *)data;
 
-    // fprintf(stderr, "read thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-    // td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
+    /*
+     * fprintf(stderr, "read thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
+     * td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
+     */
 
     while (td->size > 0) {
         if (td->size > td->block_size) {
@@ -167,8 +185,10 @@ read_thread_fn(void *data)
         assert(ret > 0);
     }
 
-    // fprintf(stderr, "read success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-    // td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
+    /*
+     * fprintf(stderr, "read success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
+     * td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
+     */
 
     return NULL;
 }
@@ -179,8 +199,10 @@ write_thread_fn(void *data)
     ssize_t        ret;
     thread_data_t *td = (thread_data_t *)data;
 
-    // fprintf(stderr, "wrt thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-    // td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
+    /*
+     * fprintf(stderr, "wrt thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
+     * td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
+     */
 
     while (td->size > 0) {
         if (td->size > td->block_size) {
@@ -196,8 +218,10 @@ write_thread_fn(void *data)
         assert(ret > 0);
     }
 
-    // printf("wrt success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-    // td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
+    /*
+     * printf("wrt success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
+     * td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
+     */
 
     return NULL;
 }
@@ -225,7 +249,32 @@ write_thread_fn(void *data)
 #define REGION_OVERFLOW(A, Z)                                                                                \
     (ADDR_OVERFLOW(A) || SIZE_OVERFLOW(Z) || HADDR_UNDEF == (A) + (Z) || (off_t)((A) + (Z)) < (off_t)(A))
 
+
+#define check_cudadrivercall(fn)                                                                             \
+    {                                                                                                        \
+        CUresult res = fn;                                                                                   \
+        if (res != CUDA_SUCCESS) {                                                                           \
+            const char *str = nullptr;                                                                       \
+            cuGetErrorName(res, &str);                                                                       \
+            fprintf(stderr, "cuda driver api call failed %d, %d : %s\n", fn, __LINE__, str);                 \
+            fprintf(stderr, "EXITING program!!!\n");                                                         \
+            exit(1);                                                                                         \
+        }                                                                                                    \
+    }
+
+#define check_cudaruntimecall(fn)                                                                            \
+    {                                                                                                        \
+        cudaError_t res = fn;                                                                                \
+        if (res != cudaSuccess) {                                                                            \
+            const char *str = cudaGetErrorName(res);                                                         \
+            fprintf(stderr, "cuda runtime api call failed %d, %d : %s\n", fn, __LINE__, str);                \
+            fprintf(stderr, "EXITING program!!!\n");                                                         \
+            exit(1);                                                                                         \
+        }                                                                                                    \
+    }
+
 /* Prototypes */
+static hid_t   H5FD_gds_init(void);
 static herr_t  H5FD__gds_term(void);
 static herr_t  H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size,
                                          H5FD_gds_fapl_t *fa_out);
@@ -251,7 +300,7 @@ static herr_t  H5FD__gds_delete(const char *filename, hid_t fapl_id);
 
 static const H5FD_class_t H5FD_gds_g = {
     H5FD_GDS_VALUE,          /* value                */
-    "gds",                   /* name                 */
+    H5FD_GDS_NAME,           /* name                 */
     MAXADDR,                 /* maxaddr              */
     H5F_CLOSE_WEAK,          /* fc_degree            */
     H5FD__gds_term,          /* terminate            */
@@ -300,7 +349,7 @@ static const H5FD_class_t H5FD_gds_g = {
  *
  *-------------------------------------------------------------------------
  */
-hid_t
+static hid_t
 H5FD_gds_init(void)
 {
     CUfileError_t status;
@@ -331,9 +380,11 @@ H5FD_gds_init(void)
         }
         else {
             H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, H5I_INVALID_HID, "unable to open cufile driver");
-            // TODO: get the error string once the cufile c api is ready
-            // fprintf(stderr, "cufile driver open error: %s\n",
-            //  cuFileGetErrorString(status));
+            /* TODO: get the error string once the cufile c api is ready */
+            /*
+             * fprintf(stderr, "cufile driver open error: %s\n",
+             * cuFileGetErrorString(status));
+             */
         }
     }
 
@@ -366,17 +417,19 @@ H5FD__gds_term(void)
     herr_t        ret_value = SUCCEED; /* Return value */
 
     if (cu_file_driver_opened) {
-        // FIXME: cuFileDriveClose is throwing errors with h5py and cupy
-        // status = cuFileDriverClose();
-        // if (status.err == CU_FILE_SUCCESS) {
-        //   cu_file_driver_opened = false;
-        // }
-        // else {
-        //   H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to close cufile driver");
-        //   // TODO: get the error string once the cufile c api is ready
-        //   // fprintf(stderr, "cufile driver close failed: %s\n",
-        //   //   cuFileGetErrorString(status));
-        // }
+        /* FIXME: cuFileDriveClose is throwing errors with h5py and cupy */
+        /*
+         * status = cuFileDriverClose();
+         * if (status.err == CU_FILE_SUCCESS) {
+         *   cu_file_driver_opened = false;
+         * }
+         * else {
+         *   H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to close cufile driver");
+         *   // TODO: get the error string once the cufile c api is ready
+         *   // fprintf(stderr, "cufile driver close failed: %s\n",
+         *   //   cuFileGetErrorString(status));
+         * }
+         */
     }
 
     /* Unregister from HDF5 error API */
@@ -398,7 +451,7 @@ H5FD__gds_term(void)
     } /* end if */
 
     /* Reset VFL ID */
-    H5FD_GDS_g = 0;
+    H5FD_GDS_g = H5I_INVALID_HID;
 
 done:
     H5FD_GDS_FUNC_LEAVE_API;
@@ -617,6 +670,8 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     void *          buf1, *buf2;
     H5FD_t *        ret_value = NULL;
 
+    H5FD_GDS_INIT;
+
     /* Sanity check on file offsets */
     assert(sizeof(off_t) >= sizeof(size_t));
 
@@ -688,8 +743,8 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to register file with cufile driver");
     }
 
-    // DEFAULT io worker params
-    // TODO: error checking
+    /* DEFAULT io worker params */
+    /* TODO: error checking */
     file->num_io_threads = 1;
     file->io_block_size  = 8 * 1024 * 1024;
     num_io_threads_var   = getenv("H5_GDS_VFD_IO_THREADS");
@@ -703,13 +758,15 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         file->io_block_size = atoi(io_block_size_var);
     }
 
-    // TODO: error checking for num_io_threads
-    // FIXME: move to set fapl
-    // H5Pget( fapl_id, "H5_GDS_VFD_IO_THREADS", &file->num_io_threads );
-    // H5Pget( fapl_id, "H5_GDS_VFD_IO_BLOCK_SIZE", &file->io_block_size );
+    /* TODO: error checking for num_io_threads */
+    /* FIXME: move to set fapl */
+    /*
+     * H5Pget( fapl_id, "H5_GDS_VFD_IO_THREADS", &file->num_io_threads );
+     * H5Pget( fapl_id, "H5_GDS_VFD_IO_BLOCK_SIZE", &file->io_block_size );
+     */
 
     /* IOThreads */
-    // TODO: POSSIBLE MEMORY LEAK! figure out how to deal with the the double open H5Fint does
+    /* TODO: POSSIBLE MEMORY LEAK! figure out how to deal with the the double open H5Fint does */
     file->td      = (thread_data_t *)malloc((unsigned)file->num_io_threads * sizeof(thread_data_t));
     file->threads = (pthread_t *)malloc((unsigned)file->num_io_threads * sizeof(pthread_t));
 
@@ -738,8 +795,10 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         /* The environment variable was set, so use that preferentially */
         file->ignore_disabled_file_locks = ignore_disabled_file_locks_s;
     else {
+        hbool_t unused;
+
         /* Use the value in the property list */
-        if (H5Pget_file_locking(fapl_id, NULL, &file->ignore_disabled_file_locks) < 0)
+        if (H5Pget_file_locking(fapl_id, &unused, &file->ignore_disabled_file_locks) < 0)
             H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTGET, NULL, "can't get ignore disabled file locks property");
     }
 
@@ -764,7 +823,8 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         }
         else {
             file->fa.must_align = FALSE;
-            ftruncate(file->fd, (off_t)0);
+            if (-1 == ftruncate(file->fd, (off_t)0))
+                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, NULL, "unable to extend file properly");
         }
     }
     else {
@@ -826,7 +886,7 @@ H5FD__gds_close(H5FD_t *_file)
     H5FD_gds_t *file      = (H5FD_gds_t *)_file;
     herr_t      ret_value = SUCCEED; /* Return value */
 
-    // close file handle
+    /* close file handle */
     cuFileHandleDeregister(file->cf_handle);
 
     if (close(file->fd) < 0)
@@ -1106,25 +1166,29 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
     if (is_device_pointer(buf)) {
-        // TODO: register device memory only once
-        // if (!reg_once) {
-        //   status = cuFileBufRegister(buf, size, 0);
-        //   if (status.err != CU_FILE_SUCCESS) {
-        //     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
-        //   }
-        //   reg_once = true;
-        // }
+        /* TODO: register device memory only once */
+        /*
+         * if (!reg_once) {
+         *   status = cuFileBufRegister(buf, size, 0);
+         *   if (status.err != CU_FILE_SUCCESS) {
+         *     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+         *   }
+         *   reg_once = true;
+         * }
+         */
 
         if (io_threads > 0) {
             assert(size != 0);
 
-            // make each thread access at least a 4K page
+            /* make each thread access at least a 4K page */
             if ((1 + (size - 1) / 4096) < (unsigned)io_threads) {
                 io_threads = (int)(1 + ((size - 1) / 4096));
             }
 
-            // printf("\tH5Pset_gds_read using io_threads: %d\n", io_threads);
-            // printf("\tH5Pset_gds_read using io_block_size: %d\n", block_size);
+            /*
+             * printf("\tH5Pset_gds_read using io_threads: %d\n", io_threads);
+             * printf("\tH5Pset_gds_read using io_block_size: %d\n", block_size);
+             */
 
             io_chunk     = (unsigned)size / (unsigned)io_threads;
             io_chunk_rem = (unsigned)size % (unsigned)io_threads;
@@ -1156,11 +1220,13 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
             assert(ret > 0);
         }
 
-        // TODO: deregister device memory only once
-        // status = cuFileBufDeregister(buf);
-        // if (status.err != CU_FILE_SUCCESS) {
-        // H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
-        // }
+        /* TODO: deregister device memory only once */
+        /*
+         * status = cuFileBufDeregister(buf);
+         * if (status.err != CU_FILE_SUCCESS) {
+         *   H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+         * }
+         */
     }
     else {
         /* If the system doesn't require data to be aligned, read the data in
@@ -1201,12 +1267,12 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                 assert((size_t)nbytes <= size);
 
                 /* FIXME */
-                // H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t);
+                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t); */
 
                 size -= (size_t)nbytes;
 
                 /* FIXME */
-                // H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t);
+                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t); */
 
                 addr += (haddr_t)nbytes;
                 buf = (char *)buf + nbytes;
@@ -1368,25 +1434,29 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
     if (is_device_pointer(buf)) {
-        // TODO: register device memory only once
-        // if (!reg_once) {
-        //   status = cuFileBufRegister(buf, size, 0);
-        //   if (status.err != CU_FILE_SUCCESS) {
-        //     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
-        //   }
-        //   reg_once = true;
-        // }
+        /* TODO: register device memory only once */
+        /*
+         * if (!reg_once) {
+         *   status = cuFileBufRegister(buf, size, 0);
+         *   if (status.err != CU_FILE_SUCCESS) {
+         *     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+         *   }
+         *   reg_once = true;
+         * }
+         */
 
         if (io_threads > 0) {
             assert(size != 0);
 
-            // make each thread access at least a 4K page
+            /* make each thread access at least a 4K page */
             if ((1 + (size - 1) / 4096) < (unsigned)io_threads) {
                 io_threads = (int)(1 + ((size - 1) / 4096));
             }
 
-            // printf("\tH5Pset_gds_write using io_threads: %d\n", io_threads);
-            // printf("\tH5Pset_gds_write using io_block_size: %d\n", block_size);
+            /*
+             * printf("\tH5Pset_gds_write using io_threads: %d\n", io_threads);
+             * printf("\tH5Pset_gds_write using io_block_size: %d\n", block_size);
+             */
 
             io_chunk     = (unsigned)size / (unsigned)io_threads;
             io_chunk_rem = (unsigned)size % (unsigned)io_threads;
@@ -1414,16 +1484,18 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
             }
         }
         else {
-            // FIXME: max xfer size, need to batch transfers
+            /* FIXME: max xfer size, need to batch transfers */
             ret = cuFileWrite(file->cf_handle, buf, size, offset, 0);
             assert(ret > 0);
         }
 
-        // TODO: deregister device memory only once
-        // status = cuFileBufDeregister(buf);
-        // if (status.err != CU_FILE_SUCCESS) {
-        // H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
-        // }
+        /* TODO: deregister device memory only once */
+        /*
+         * status = cuFileBufDeregister(buf);
+         * if (status.err != CU_FILE_SUCCESS) {
+         *   H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
+         * }
+         */
     }
     else {
         /* If the system doesn't require data to be aligned, read the data in
@@ -1458,12 +1530,12 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                 assert((size_t)nbytes <= size);
 
                 /* FIXME */
-                // H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t);
+                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t); */
 
                 size -= (size_t)nbytes;
 
                 /* FIXME */
-                // H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t);
+                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t); */
 
                 addr += (haddr_t)nbytes;
                 buf = (const char *)buf + nbytes;
@@ -1795,6 +1867,8 @@ static herr_t
 H5FD__gds_delete(const char *filename, hid_t fapl_id)
 {
     herr_t ret_value = SUCCEED; /* Return value */
+
+    H5FD_GDS_INIT;
 
     assert(filename);
 
