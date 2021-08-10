@@ -65,6 +65,76 @@ set(HDF5_VFD_GDS_CMAKE_MODULE_PATH "${HDF5_VFD_GDS_SOURCE_DIR}/CMake")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${HDF5_VFD_GDS_CMAKE_MODULE_PATH})
 
 #------------------------------------------------------------------------------
+# Locate CUDA
+#------------------------------------------------------------------------------
+find_package (CUDA REQUIRED)
+
+# Set Cufile installation directory to Cuda installation directory by default
+set (HDF5_VFD_GDS_CUFILE_DIR ${CUDA_TOOLKIT_ROOT_DIR} CACHE PATH "Cufile installation directory for Nvidia GDS support")
+
+# Try to locate cufile library
+find_library (HDF5_VFD_GDS_CUFILE_LIB
+  NAMES
+    cufile
+  HINTS
+    "${HDF5_VFD_GDS_CUFILE_DIR}/lib"
+    "${HDF5_VFD_GDS_CUFILE_DIR}/lib64"
+  REQUIRED
+)
+
+set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
+  ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
+  ${CUDA_INCLUDE_DIRS}
+)
+set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
+  ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
+  ${CUDA_LIBRARIES}
+  ${HDF5_VFD_GDS_CUFILE_LIB}
+)
+
+#------------------------------------------------------------------------------
+# Locate HDF5
+#------------------------------------------------------------------------------
+find_package(HDF5 1.13.0 NO_MODULE NAMES hdf5 COMPONENTS C shared)
+if(HDF5_FOUND)
+  set(HDF5_C_SHARED_LIBRARY hdf5-shared)
+  if(NOT TARGET ${HDF5_C_SHARED_LIBRARY})
+      message(FATAL_ERROR "Could not find hdf5 shared target, please make "
+      "sure that HDF5 has been compiled with shared libraries enabled.")
+  endif()
+  set(HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES
+    ${HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES}
+    ${HDF5_C_SHARED_LIBRARY}
+  )
+  set(HDF5_VFD_GDS_USE_SYSTEM_CMAKE_HDF5 1)
+else()
+  # Allow for HDF5 autotools builds
+  find_package(HDF5 1.13.0 MODULE REQUIRED)
+  set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
+    ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
+    ${HDF5_INCLUDE_DIRS}
+  )
+  set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
+    ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
+    ${HDF5_LIBRARIES}
+  )
+  set(HDF5_VFD_GDS_USE_SYSTEM_CMAKE_HDF5 0)
+endif()
+
+#------------------------------------------------------------------------------
+# Locate MPI - currently just used for building VFD's tests
+#------------------------------------------------------------------------------
+find_package(MPI REQUIRED COMPONENTS C)
+set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
+  ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
+  ${MPI_C_INCLUDE_DIRS}
+)
+set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
+  ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
+  ${MPI_C_LIBRARIES}
+)
+
+#------------------------------------------------------------------------------
 # Version information
 #------------------------------------------------------------------------------
 include(${HDF5_VFD_GDS_CMAKE_MODULE_PATH}/Git/Git.cmake)

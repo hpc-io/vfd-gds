@@ -1,4 +1,6 @@
 #include <stdlib.h>
+#include <assert.h>
+
 #include <mpi.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -93,53 +95,53 @@ static void extend_writeInd2_cuda(void);
  * ZCOL        same as BYCOL except process 0 gets 0 columns
  */
 static void
-slab_set(int mpi_rank, int mpi_size, hsize_t start[], hsize_t count[], hsize_t stride[], hsize_t block[],
+slab_set(int rank, int comm_size, hsize_t start[], hsize_t count[], hsize_t stride[], hsize_t block[],
          int mode)
 {
     switch (mode) {
         case BYROW:
             /* Each process takes a slabs of rows. */
-            block[0]  = (hsize_t)(DIM0 / mpi_size);
+            block[0]  = (hsize_t)(DIM0 / comm_size);
             block[1]  = (hsize_t)DIM1;
             stride[0] = block[0];
             stride[1] = block[1];
             count[0]  = 1;
             count[1]  = 1;
-            start[0]  = (hsize_t)mpi_rank * block[0];
+            start[0]  = (hsize_t)rank * block[0];
             start[1]  = 0;
             break;
         case BYCOL:
             /* Each process takes a block of columns. */
             block[0]  = (hsize_t)DIM0;
-            block[1]  = (hsize_t)(DIM1 / mpi_size);
+            block[1]  = (hsize_t)(DIM1 / comm_size);
             stride[0] = block[0];
             stride[1] = block[1];
             count[0]  = 1;
             count[1]  = 1;
             start[0]  = 0;
-            start[1]  = (hsize_t)mpi_rank * block[1];
+            start[1]  = (hsize_t)rank * block[1];
             break;
         case ZROW:
             /* Similar to BYROW except process 0 gets 0 row */
-            block[0]  = (hsize_t)(mpi_rank ? DIM0 / mpi_size : 0);
+            block[0]  = (hsize_t)(rank ? DIM0 / comm_size : 0);
             block[1]  = (hsize_t)DIM1;
-            stride[0] = (mpi_rank ? block[0] : 1); /* avoid setting stride to 0 */
+            stride[0] = (rank ? block[0] : 1); /* avoid setting stride to 0 */
             stride[1] = block[1];
             count[0]  = 1;
             count[1]  = 1;
-            start[0]  = (mpi_rank ? (hsize_t)mpi_rank * block[0] : 0);
+            start[0]  = (rank ? (hsize_t)rank * block[0] : 0);
             start[1]  = 0;
             break;
         case ZCOL:
             /* Similar to BYCOL except process 0 gets 0 column */
             block[0]  = (hsize_t)DIM0;
-            block[1]  = (hsize_t)(mpi_rank ? DIM1 / mpi_size : 0);
+            block[1]  = (hsize_t)(rank ? DIM1 / comm_size : 0);
             stride[0] = block[0];
-            stride[1] = (hsize_t)(mpi_rank ? block[1] : 1); /* avoid setting stride to 0 */
+            stride[1] = (hsize_t)(rank ? block[1] : 1); /* avoid setting stride to 0 */
             count[0]  = 1;
             count[1]  = 1;
             start[0]  = 0;
-            start[1]  = (mpi_rank ? (hsize_t)mpi_rank * block[1] : 0);
+            start[1]  = (rank ? (hsize_t)rank * block[1] : 0);
             break;
         default:
             /* Unknown mode.  Set it to cover the whole dataset. */
@@ -473,7 +475,6 @@ dataset_writeAll_cuda(void)
     size_t   num_points;    /* for point selection */
     hsize_t *coords = NULL; /* for point selection */
     hsize_t  current_dims;  /* for point selection */
-    int      i;
 
     herr_t ret; /* Generic return value */
 
@@ -972,7 +973,6 @@ dataset_readAll_cuda(void)
 
     size_t   num_points;    /* for point selection */
     hsize_t *coords = NULL; /* for point selection */
-    hsize_t  current_dims;  /* for point selection */
     int      i, j, k;
 
     herr_t ret; /* Generic return value */
@@ -1777,12 +1777,12 @@ main(int argc, char **argv)
         printf("==========================\n\n");
     }
 
-    nerrors += extend_writeInd_cuda();
-    nerrors += dataset_writeAll_cuda();
-    nerrors += dataset_readAll_cuda();
-    nerrors += dataset_writeInd_cuda();
-    nerrors += dataset_readInd_cuda();
-    nerrors += extend_writeInd2_cuda();
+    extend_writeInd_cuda();
+    dataset_writeAll_cuda();
+    dataset_readAll_cuda();
+    dataset_writeInd_cuda();
+    dataset_readInd_cuda();
+    extend_writeInd2_cuda();
 
     if (nerrors)
         goto exit;

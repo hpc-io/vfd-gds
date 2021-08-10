@@ -31,6 +31,13 @@ foreach(vfd_test ${vfd_gds_tests})
   add_executable(${vfd_test}
     ${CMAKE_CURRENT_SOURCE_DIR}/${vfd_test}.c
   )
+  target_include_directories(${vfd_test}
+    PUBLIC  "$<BUILD_INTERFACE:${HDF5_VFD_GDS_BUILD_INCLUDE_DEPENDENCIES}>"
+            $<INSTALL_INTERFACE:${HDF5_VFD_GDS_INSTALL_INCLUDE_INTERFACE}>
+  )
+  target_include_directories(${vfd_test}
+    SYSTEM PUBLIC ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
+  )
   target_link_libraries(${vfd_test}
       ${HDF5_VFD_GDS_EXPORTED_LIBS}
       ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}

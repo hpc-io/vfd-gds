@@ -13,58 +13,6 @@ set(HDF5_VFD_GDS_BUILD_INCLUDE_DEPENDENCIES
 #------------------------------------------------------------------------------
 # External dependencies
 #------------------------------------------------------------------------------
-# CUDA
-find_package (CUDA REQUIRED)
-
-# Set Cufile installation directory to Cuda installation directory by default
-set (HDF5_VFD_GDS_CUFILE_DIR ${CUDA_TOOLKIT_ROOT_DIR} CACHE PATH "Cufile installation directory for Nvidia GDS support")
-
-# Try to locate cufile library
-find_library (HDF5_VFD_GDS_CUFILE_LIB
-  NAMES
-    cufile
-  HINTS
-    "${HDF5_VFD_GDS_CUFILE_DIR}/lib"
-    "${HDF5_VFD_GDS_CUFILE_DIR}/lib64"
-  REQUIRED
-)
-
-set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
-  ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
-  ${CUDA_INCLUDE_DIRS}
-)
-set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
-  ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
-  ${CUDA_LIBRARIES}
-  ${HDF5_VFD_GDS_CUFILE_LIB}
-)
-
-# HDF5
-find_package(HDF5 1.13.0 NO_MODULE NAMES hdf5 COMPONENTS C shared)
-if(HDF5_FOUND)
-  set(HDF5_C_SHARED_LIBRARY hdf5-shared)
-  if(NOT TARGET ${HDF5_C_SHARED_LIBRARY})
-      message(FATAL_ERROR "Could not find hdf5 shared target, please make "
-      "sure that HDF5 has been compiled with shared libraries enabled.")
-  endif()
-  set(HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES
-    ${HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES}
-    ${HDF5_C_SHARED_LIBRARY}
-  )
-  set(HDF5_VFD_GDS_USE_SYSTEM_CMAKE_HDF5 1 PARENT_SCOPE)
-else()
-  # Allow for HDF5 autotools builds
-  find_package(HDF5 1.13.0 MODULE REQUIRED)
-  set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
-    ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
-    ${HDF5_INCLUDE_DIRS}
-  )
-  set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
-    ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
-    ${HDF5_LIBRARIES}
-  )
-  set(HDF5_VFD_GDS_USE_SYSTEM_CMAKE_HDF5 0 PARENT_SCOPE)
-endif()
 
 #------------------------------------------------------------------------------
 # Set sources
@@ -202,6 +150,7 @@ set(HDF5_VFD_GDS_LIBRARIES ${HDF5_VFD_GDS_LIBRARIES} PARENT_SCOPE)
 set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
   ${HDF5_VFD_GDS_EXT_PKG_LIB_DEPENDENCIES}
+  PARENT_SCOPE
 )
 foreach(lib_dep ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES})
   # get library name
@@ -228,6 +177,7 @@ set(HDF5_VFD_GDS_LIB_DEPENDENCIES ${HDF5_VFD_GDS_LIB_DEPENDENCIES} PARENT_SCOPE)
 set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
   ${HDF5_VFD_GDS_EXT_PKG_INCLUDE_DEPENDENCIES}
+  PARENT_SCOPE
 )
 if(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES)
   list(REMOVE_DUPLICATES HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES)
