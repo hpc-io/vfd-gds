@@ -61,6 +61,8 @@
 #define VRFY_G(val, mesg) VRFY_IMPL(val, mesg, mpi_rank_g)
 #define VRFY(val, mesg)   VRFY_IMPL(val, mesg, mpi_rank)
 
+#define H5FD_GDS_UNUSED(param) (void)(param)
+
 typedef int DATATYPE;
 
 static MPI_Comm comm = MPI_COMM_WORLD;
@@ -217,6 +219,10 @@ dataset_vrfy(hsize_t start[], hsize_t count[], hsize_t stride[], hsize_t block[]
     hsize_t i, j;
     int     vrfyerrs;
 
+    /* unused */
+    H5FD_GDS_UNUSED(count);
+    H5FD_GDS_UNUSED(stride);
+
     vrfyerrs = 0;
     for (i = 0; i < block[0]; i++) {
         for (j = 0; j < block[1]; j++) {
@@ -255,7 +261,6 @@ extend_writeInd_cuda(void)
     hid_t       file_dataspace;     /* File dataspace ID */
     hid_t       mem_dataspace;      /* memory dataspace ID */
     hid_t       dataset1, dataset2; /* Dataset ID */
-    const char *filename;
     hsize_t     dims[RANK];                                      /* dataset dim sizes */
     hsize_t     max_dims[RANK] = {H5S_UNLIMITED, H5S_UNLIMITED}; /* dataset maximum dim sizes */
     DATATYPE *  data_array1    = NULL;                           /* data buffer */
@@ -270,7 +275,7 @@ extend_writeInd_cuda(void)
 
     herr_t ret; /* Generic return value */
 
-    printf("Extend independent write test on file %s\n", filename);
+    printf("Extend independent write test on file %s\n", FILENAME);
 
     /* setup chunk-size. Make sure sizes are > 0 */
     chunk_dims[0] = CHUNK_DIM0;
@@ -311,7 +316,7 @@ extend_writeInd_cuda(void)
     }
 
     /* create the file collectively */
-    fid = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
+    fid = H5Fcreate(FILENAME, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
     VRFY((fid >= 0), "H5Fcreate succeeded");
 
     /* Release file-access template */
@@ -464,7 +469,6 @@ dataset_writeAll_cuda(void)
     hid_t       datatype;                               /* Datatype ID */
     hsize_t     dims[RANK];                             /* dataset dim sizes */
     DATATYPE *  data_array1 = NULL;                     /* data buffer */
-    const char *filename;
 
     DATATYPE *cuda_buff = NULL; /* data buffer */
 
@@ -478,7 +482,7 @@ dataset_writeAll_cuda(void)
 
     herr_t ret; /* Generic return value */
 
-    printf("Collective write test on file %s\n", filename);
+    printf("Collective write test on file %s\n", FILENAME);
 
     /* set up the coords array selection */
     num_points = DIM1;
@@ -503,7 +507,7 @@ dataset_writeAll_cuda(void)
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
     /* create the file collectively */
-    fid = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
+    fid = H5Fcreate(FILENAME, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
     VRFY((fid >= 0), "H5Fcreate succeeded");
 
     /* Release file-access template */
@@ -964,7 +968,6 @@ dataset_readAll_cuda(void)
     hid_t       dataset1, dataset2, dataset5, dataset6, dataset7; /* Dataset ID */
     DATATYPE *  data_array1  = NULL;                              /* data buffer */
     DATATYPE *  data_origin1 = NULL;                              /* expected data buffer */
-    const char *filename;
     DATATYPE *  cuda_buff = NULL; /* data buffer */
 
     hsize_t start[RANK];               /* for hyperslab setting */
@@ -977,7 +980,7 @@ dataset_readAll_cuda(void)
 
     herr_t ret; /* Generic return value */
 
-    printf("Collective read test on file %s\n", filename);
+    printf("Collective read test on file %s\n", FILENAME);
 
     /* set up the coords array selection */
     num_points = DIM1;
@@ -1004,7 +1007,7 @@ dataset_readAll_cuda(void)
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
     /* open the file collectively */
-    fid = H5Fopen(filename, H5F_ACC_RDONLY, acc_tpl);
+    fid = H5Fopen(FILENAME, H5F_ACC_RDONLY, acc_tpl);
     VRFY((fid >= 0), "H5Fopen succeeded");
 
     /* Release file-access template */
@@ -1377,7 +1380,6 @@ dataset_writeInd_cuda(void)
     hid_t       dataset1, dataset2; /* Dataset ID */
     hsize_t     dims[RANK];         /* dataset dim sizes */
     DATATYPE *  data_array1 = NULL; /* data buffer */
-    const char *filename;
     DATATYPE *  cuda_buff = NULL; /* data buffer */
 
     hsize_t start[RANK];               /* for hyperslab setting */
@@ -1386,7 +1388,7 @@ dataset_writeInd_cuda(void)
 
     herr_t ret; /* Generic return value */
 
-    printf("Independent write test on file %s\n", filename);
+    printf("Independent write test on file %s\n", FILENAME);
 
     /* allocate memory for data buffer */
     data_array1 = (DATATYPE *)malloc(DIM0 * DIM1 * sizeof(DATATYPE));
@@ -1406,7 +1408,7 @@ dataset_writeInd_cuda(void)
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
     /* create the file collectively */
-    fid = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
+    fid = H5Fcreate(FILENAME, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
     VRFY((fid >= 0), "H5Fcreate succeeded");
 
     /* Release file-access template */
@@ -1510,7 +1512,6 @@ dataset_readInd_cuda(void)
     hid_t       dataset1, dataset2;  /* Dataset ID */
     DATATYPE *  data_array1  = NULL; /* data buffer */
     DATATYPE *  data_origin1 = NULL; /* expected data buffer */
-    const char *filename;
     DATATYPE *  cuda_buff = NULL; /* data buffer */
 
     hsize_t start[RANK];               /* for hyperslab setting */
@@ -1519,7 +1520,7 @@ dataset_readInd_cuda(void)
 
     herr_t ret; /* Generic return value */
 
-    printf("Independent read test on file %s\n", filename);
+    printf("Independent read test on file %s\n", FILENAME);
 
     /* allocate memory for data buffer */
     data_array1 = (DATATYPE *)malloc(DIM0 * DIM1 * sizeof(DATATYPE));
@@ -1538,7 +1539,7 @@ dataset_readInd_cuda(void)
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
     /* open the file collectively */
-    fid = H5Fopen(filename, H5F_ACC_RDONLY, acc_tpl);
+    fid = H5Fopen(FILENAME, H5F_ACC_RDONLY, acc_tpl);
     VRFY((fid >= 0), "");
 
     /* Release file-access template */
@@ -1616,7 +1617,6 @@ dataset_readInd_cuda(void)
 static void
 extend_writeInd2_cuda(void)
 {
-    const char *filename;
     hid_t       fid;             /* HDF5 file ID */
     hid_t       fapl;            /* File access templates */
     hid_t       fs;              /* File dataspace ID */
@@ -1638,7 +1638,7 @@ extend_writeInd2_cuda(void)
     cudaMalloc((void **)&cuda_written, 10 * sizeof(int));
     cudaMalloc((void **)&cuda_retrieved, 10 * sizeof(int));
 
-    printf("Extend independent write test #2 on file %s\n", filename);
+    printf("Extend independent write test #2 on file %s\n", FILENAME);
 
     /* -------------------
      * START AN HDF5 FILE
@@ -1654,7 +1654,7 @@ extend_writeInd2_cuda(void)
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
     /* create the file collectively */
-    fid = H5Fcreate(filename, H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
+    fid = H5Fcreate(FILENAME, H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
     VRFY((fid >= 0), "H5Fcreate succeeded");
 
     /* Release file-access template */
