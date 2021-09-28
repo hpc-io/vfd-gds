@@ -297,6 +297,8 @@ static herr_t  H5FD__gds_truncate(H5FD_t *_file, hid_t dxpl_id, hbool_t closing)
 static herr_t  H5FD__gds_lock(H5FD_t *_file, hbool_t rw);
 static herr_t  H5FD__gds_unlock(H5FD_t *_file);
 static herr_t  H5FD__gds_delete(const char *filename, hid_t fapl_id);
+static herr_t  H5FD__gds_ctl(H5FD_t *_file, uint64_t op_code, uint64_t flags, const void *input,
+                              void **output);
 
 static const H5FD_class_t H5FD_gds_g = {
     H5FD_GDS_VALUE,          /* value                */
@@ -332,6 +334,7 @@ static const H5FD_class_t H5FD_gds_g = {
     H5FD__gds_lock,          /* lock                 */
     H5FD__gds_unlock,        /* unlock               */
     H5FD__gds_delete,        /* delete               */
+    H5FD__gds_ctl,           /* ctl                  */
     H5FD_FLMAP_DICHOTOMY     /* fl_map               */
 };
 
@@ -993,6 +996,7 @@ H5FD__gds_query(const H5FD_t *_f, unsigned long *flags /* out */)
             H5FD_FEAT_SUPPORTS_SWMR_IO; /* VFD supports the single-writer/multiple-readers (SWMR) pattern   */
         *flags |= H5FD_FEAT_DEFAULT_VFD_COMPATIBLE; /* VFD creates a file which can be opened with the default
                                                        VFD      */
+        *flags |= H5FD_FEAT_SPECIAL_MEMMANAGE; /* VFD uses CUDA memory management routines */
     }
 
     H5FD_GDS_FUNC_LEAVE_API;
@@ -1878,6 +1882,71 @@ H5FD__gds_delete(const char *filename, hid_t fapl_id)
 done:
     H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_delete() */
+
+/*-------------------------------------------------------------------------
+ * Function:    H5FD__gds_ctl
+ *
+ * Purpose:     Perform an optional "ctl" operation
+ *
+ * Return:      SUCCEED/FAIL
+ *
+ *-------------------------------------------------------------------------
+ */
+static herr_t
+H5FD__gds_ctl(H5FD_t *_file, uint64_t op_code, uint64_t flags, const void *input,
+              void **output)
+{
+    H5FD_gds_t *file      = (H5FD_gds_t *)_file; /* VFD file struct */
+    herr_t      ret_value = SUCCEED;             /* Return value */
+
+    assert(file);
+
+    switch (op_code) {
+        /* Driver-level memory copy */
+        case H5FD_CTL__MEM_COPY:
+        {
+            H5FD_ctl_memcpy_args_t *copy_args = (H5FD_ctl_memcpy_args_t *)input;
+            cudaMemcpyKind cpyKind;
+            hbool_t src_on_device = FALSE;
+            hbool_t dst_on_device = FALSE;
+            const void *src;
+            void *dst;
+
+            if (!copy_args)
+                H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "invalid arguments to ctl operation");
+
+            /* Add offsets to source and destination buffers */
+            src = ((const unsigned char *)copy_args->srcbuf) + copy_args->src_off;
+            dst = ((unsigned char *)copy_args->dstbuf) + copy_args->dst_off;
+
+            /* Determine type of memory copy to perform */
+            src_on_device = is_device_pointer(copy_args->srcbuf);
+            dst_on_device = is_device_pointer(copy_args->dstbuf);
+
+            if (src_on_device && dst_on_device)
+                cpyKind = cudaMemcpyDeviceToDevice;
+            else if (src_on_device && !dst_on_device)
+                cpyKind = cudaMemcpyDeviceToHost;
+            else if (!src_on_device && dst_on_device)
+                cpyKind = cudaMemcpyHostToDevice;
+            else
+                cpyKind = cudaMemcpyHostToHost;
+
+            check_cudaruntimecall(cudaMemcpy(dst, src, copy_args->len, cpyKind))
+
+            break;
+        }
+
+        /* Unknown op code */
+        default:
+            if (flags & H5FD_CTL__FAIL_IF_UNKNOWN_FLAG)
+                H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_FCNTL, FAIL, "unknown op_code and fail if unknown flag is set");
+            break;
+    }
+
+done:
+    H5FD_GDS_FUNC_LEAVE_API;
+} /* end H5FD__gds_ctl() */
 
 /*
  * Stub routines for dynamic plugin loading
