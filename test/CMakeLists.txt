@@ -49,7 +49,10 @@ endforeach()
 # Tests
 #-----------------------------------------------------------------------------
 foreach(vfd_test ${vfd_gds_tests})
-  add_test(NAME "gds_vfd_test"
+  add_test(NAME "${vfd_test}"
     COMMAND $<TARGET_FILE:${vfd_test}>
+  )
+  set_tests_properties(${vfd_test} PROPERTIES
+    ENVIRONMENT "HDF5_PLUGIN_PATH=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
   )
 endforeach()
