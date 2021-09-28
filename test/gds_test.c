@@ -37,6 +37,12 @@
 #define ZROW  3 /* same as BYCOL except process 0 gets 0 rows */
 #define ZCOL  4 /* same as BYCOL except process 0 gets 0 columns */
 
+/* I/O mode definitions */
+#define NO_COLLECTIVE_SUPPORT /* HDF5 currently only supports collective I/O for
+                               * MPI-based VFDs. Since the GDS VFD is not currently
+                               * MPI-aware, disable collective I/O access in tests
+                               * for now.
+                               */
 #define DXFER_COLLECTIVE_IO  0x1 /* Collective IO*/
 #define DXFER_INDEPENDENT_IO 0x2 /* Independent IO collectively */
 
@@ -296,7 +302,7 @@ extend_writeInd_cuda(void)
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
-    /* Set GPU VFD on FAPL */
+    /* Set GDS VFD on FAPL */
     ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
     VRFY((ret >= 0), "H5Pset_driver_by_name");
 
@@ -506,7 +512,7 @@ dataset_writeAll_cuda(void)
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
-    /* Set GPU VFD on FAPL */
+    /* Set GDS VFD on FAPL */
     ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
     VRFY((ret >= 0), "H5Pset_driver_by_name");
 
@@ -588,8 +594,10 @@ dataset_writeAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "H5Pcreate xfer succeeded");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pset_dxpl_mpio succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -644,8 +652,10 @@ dataset_writeAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -711,8 +721,10 @@ dataset_writeAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -772,8 +784,10 @@ dataset_writeAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -835,8 +849,10 @@ dataset_writeAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -877,8 +893,10 @@ dataset_writeAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -916,8 +934,10 @@ dataset_writeAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -1008,7 +1028,7 @@ dataset_readAll_cuda(void)
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
-    /* Set GPU VFD on FAPL */
+    /* Set GDS VFD on FAPL */
     ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
     VRFY((ret >= 0), "H5Pset_driver_by_name");
 
@@ -1062,8 +1082,10 @@ dataset_readAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -1131,8 +1153,10 @@ dataset_readAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -1214,8 +1238,10 @@ dataset_readAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -1267,8 +1293,10 @@ dataset_readAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -1322,8 +1350,10 @@ dataset_readAll_cuda(void)
     /* set up the collective transfer properties list */
     xfer_plist = H5Pcreate(H5P_DATASET_XFER);
     VRFY((xfer_plist >= 0), "");
+#ifndef NO_COLLECTIVE_SUPPORT
     ret = H5Pset_dxpl_mpio(xfer_plist, H5FD_MPIO_COLLECTIVE);
     VRFY((ret >= 0), "H5Pcreate xfer succeeded");
+#endif
     if (dxfer_coll_type == DXFER_INDEPENDENT_IO) {
         ret = H5Pset_dxpl_mpio_collective_opt(xfer_plist, H5FD_MPIO_INDIVIDUAL_IO);
         VRFY((ret >= 0), "set independent IO collectively succeeded");
@@ -1411,7 +1441,7 @@ dataset_writeInd_cuda(void)
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
-    /* Set GPU VFD on FAPL */
+    /* Set GDS VFD on FAPL */
     ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
     VRFY((ret >= 0), "H5Pset_driver_by_name");
 
@@ -1544,7 +1574,7 @@ dataset_readInd_cuda(void)
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
-    /* Set GPU VFD on FAPL */
+    /* Set GDS VFD on FAPL */
     ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
     VRFY((ret >= 0), "H5Pset_driver_by_name");
 
@@ -1661,7 +1691,7 @@ extend_writeInd2_cuda(void)
     ret = H5Pset_coll_metadata_write(fapl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
 
-    /* Set GPU VFD on FAPL */
+    /* Set GDS VFD on FAPL */
     ret = H5Pset_driver_by_name(fapl, "gds", NULL);
     VRFY((ret >= 0), "H5Pset_driver_by_name");
 
