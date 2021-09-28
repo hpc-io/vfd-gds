@@ -356,7 +356,6 @@ static hid_t
 H5FD_gds_init(void)
 {
     CUfileError_t status;
-    CUfileDescr_t cf_descr;
     char *        lock_env_var = NULL; /* Environment variable pointer */
     hid_t         ret_value = H5I_INVALID_HID; /* Return value */
 
@@ -416,10 +415,11 @@ done:
 static herr_t
 H5FD__gds_term(void)
 {
-    CUfileError_t status;
-    herr_t        ret_value = SUCCEED; /* Return value */
+    herr_t ret_value = SUCCEED; /* Return value */
 
     if (cu_file_driver_opened) {
+        /* CUfileError_t status; */
+
         /* FIXME: cuFileDriveClose is throwing errors with h5py and cupy */
         /*
          * status = cuFileDriverClose();
@@ -604,7 +604,6 @@ H5FD__gds_fapl_get(H5FD_t *_file)
     /* Set return value */
     ret_value = H5FD__gds_fapl_copy(&(file->fa));
 
-done:
     H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5FD__gds_fapl_get() */
 
@@ -986,6 +985,9 @@ H5FD__gds_query(const H5FD_t *_f, unsigned long *flags /* out */)
 {
     herr_t ret_value = SUCCEED;
 
+    /* Silence compiler */
+    (void)_f;
+
     /* Set the VFL feature flags that this driver supports */
     if (flags) {
         *flags = 0;
@@ -1023,6 +1025,9 @@ H5FD__gds_get_eoa(const H5FD_t *_file, H5FD_mem_t type)
 
     assert(file);
 
+    /* Silence compiler */
+    (void)type;
+
     ret_value = file->eoa;
 
     H5FD_GDS_FUNC_LEAVE_API;
@@ -1046,6 +1051,9 @@ H5FD__gds_set_eoa(H5FD_t *_file, H5FD_mem_t type, haddr_t addr)
 {
     H5FD_gds_t *file = (H5FD_gds_t *)_file;
     herr_t      ret_value = SUCCEED;
+
+    /* Silence compiler */
+    (void)type;
 
     file->eoa = addr;
 
@@ -1075,6 +1083,9 @@ H5FD__gds_get_eof(const H5FD_t *_file, H5FD_mem_t type)
 
     assert(file);
 
+    /* Silence compiler */
+    (void)type;
+
     ret_value = file->eof;
 
     H5FD_GDS_FUNC_LEAVE_API;
@@ -1094,6 +1105,9 @@ H5FD__gds_get_handle(H5FD_t *_file, hid_t fapl, void **file_handle)
 {
     H5FD_gds_t *file      = (H5FD_gds_t *)_file;
     herr_t      ret_value = SUCCEED;
+
+    /* Silence compiler */
+    (void)fapl;
 
     if (!file_handle)
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "file handle not valid");
@@ -1151,7 +1165,6 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
     size_t      copy_size = size; /* Size remaining to read when using copy buffer */
     size_t      copy_offset;      /* Offset into copy buffer of the requested data */
 
-    CUfileError_t status;
     ssize_t       ret        = -1;
     int           io_threads = file->num_io_threads;
     int           block_size = file->io_block_size;
@@ -1163,6 +1176,10 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
     assert(file && file->pub.cls);
     assert(buf);
 
+    /* Silence compiler */
+    (void)type;
+    (void)dxpl_id;
+
     /* Check for overflow conditions */
     if (HADDR_UNDEF == addr)
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "addr undefined");
@@ -1170,6 +1187,8 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
     if (is_device_pointer(buf)) {
+        /* CUfileError_t status; */
+
         /* TODO: register device memory only once */
         /*
          * if (!reg_once) {
@@ -1418,7 +1437,6 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
     size_t      copy_size = size; /* Size remaining to write when using copy buffer */
     size_t      copy_offset;      /* Offset into copy buffer of the data to write */
 
-    CUfileError_t status;
     ssize_t       ret        = -1;
     int           io_threads = file->num_io_threads;
     int           block_size = file->io_block_size;
@@ -1431,6 +1449,10 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
     assert(file && file->pub.cls);
     assert(buf);
 
+    /* Silence compiler */
+    (void)type;
+    (void)dxpl_id;
+
     /* Check for overflow conditions */
     if (HADDR_UNDEF == addr)
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "addr undefined");
@@ -1438,6 +1460,8 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
     if (is_device_pointer(buf)) {
+        /* CUfileError_t status; */
+
         /* TODO: register device memory only once */
         /*
          * if (!reg_once) {
@@ -1715,6 +1739,11 @@ H5FD__gds_flush(H5FD_t *_file, hid_t dxpl_id, hbool_t closing)
     herr_t      ret_value = SUCCEED;             /* Return value */
 
     assert(file);
+
+    /* Silence compiler */
+    (void)dxpl_id;
+    (void)closing;
+
     if (fsync(file->fd) < 0) {
         H5FD_GDS_SYS_GOTO_ERROR(H5E_VFL, H5E_CANTFLUSH, FAIL, "unable perform fsync on file descriptor");
     }
@@ -1742,6 +1771,10 @@ H5FD__gds_truncate(H5FD_t *_file, hid_t dxpl_id, hbool_t closing)
     herr_t      ret_value = SUCCEED; /* Return value */
 
     assert(file);
+
+    /* Silence compiler */
+    (void)dxpl_id;
+    (void)closing;
 
     /* Extend the file to make sure it's large enough */
     if (file->eoa != file->eof) {
@@ -1876,6 +1909,9 @@ H5FD__gds_delete(const char *filename, hid_t fapl_id)
 
     assert(filename);
 
+    /* Silence compiler */
+    (void)fapl_id;
+
     if (remove(filename) < 0)
         H5FD_GDS_SYS_GOTO_ERROR(H5E_VFL, H5E_CANTDELETEFILE, FAIL, "unable to delete file");
 
@@ -1901,11 +1937,15 @@ H5FD__gds_ctl(H5FD_t *_file, uint64_t op_code, uint64_t flags, const void *input
 
     assert(file);
 
+    /* Silence compiler */
+    (void)file;
+    (void)output;
+
     switch (op_code) {
         /* Driver-level memory copy */
         case H5FD_CTL__MEM_COPY:
         {
-            H5FD_ctl_memcpy_args_t *copy_args = (H5FD_ctl_memcpy_args_t *)input;
+            const H5FD_ctl_memcpy_args_t *copy_args = (const H5FD_ctl_memcpy_args_t *)input;
             enum cudaMemcpyKind cpyKind;
             hbool_t src_on_device = FALSE;
             hbool_t dst_on_device = FALSE;

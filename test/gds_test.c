@@ -72,7 +72,6 @@
 typedef int DATATYPE;
 
 static MPI_Comm comm = MPI_COMM_WORLD;
-static MPI_Info info = MPI_INFO_NULL;
 static int      mpi_rank;
 static int      mpi_size;
 int             nerrors = 0;
