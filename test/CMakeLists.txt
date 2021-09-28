@@ -44,3 +44,12 @@ foreach(vfd_test ${vfd_gds_tests})
       ${HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES}
   )
 endforeach()
+
+#-----------------------------------------------------------------------------
+# Tests
+#-----------------------------------------------------------------------------
+foreach(vfd_test ${vfd_gds_tests})
+  add_test(NAME "gds_vfd_test"
+    COMMAND $<TARGET_FILE:${vfd_test}>
+  )
+endforeach()

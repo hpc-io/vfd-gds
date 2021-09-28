@@ -124,15 +124,17 @@ endif()
 #------------------------------------------------------------------------------
 # Locate MPI - currently just used for building VFD's tests
 #------------------------------------------------------------------------------
-find_package(MPI REQUIRED COMPONENTS C)
-set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
-  ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
-  ${MPI_C_INCLUDE_DIRS}
-)
-set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
-  ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
-  ${MPI_C_LIBRARIES}
-)
+if(HDF5_FOUND AND HDF5_IS_PARALLEL)
+  find_package(MPI REQUIRED COMPONENTS C)
+  set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
+    ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
+    ${MPI_C_INCLUDE_DIRS}
+  )
+  set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
+    ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
+    ${MPI_C_LIBRARIES}
+  )
+endif()
 
 #------------------------------------------------------------------------------
 # Version information
@@ -309,7 +311,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src)
 #-----------------------------------------------------------------------------
 # Build doxygen documentation.
 #-----------------------------------------------------------------------------
-option(BUILD_DOCUMENTATION "Build documentation." OFF)
+option(BUILD_DOCUMENTATION "Build documentation." ON)
 #if(BUILD_DOCUMENTATION)
 #  add_subdirectory(Documentation/Doxygen)
 #endif()
