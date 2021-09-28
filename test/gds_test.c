@@ -291,12 +291,14 @@ extend_writeInd_cuda(void)
     /* setup file access template */
     acc_tpl = H5Pcreate(H5P_FILE_ACCESS);
     VRFY((acc_tpl >= 0), "H5Pcreate H5P_FILE_ACCESS");
-    ret = H5Pset_fapl_mpio(acc_tpl, comm, info);
-    VRFY((ret >= 0), "H5Pset_fapl_mpio");
     ret = H5Pset_all_coll_metadata_ops(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_all_coll_metadata_ops");
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
+
+    /* Set GPU VFD on FAPL */
+    ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
+    VRFY((ret >= 0), "H5Pset_driver_by_name");
 
     /* Reduce the number of metadata cache slots, so that there are cache
      * collisions during the raw data I/O on the chunked dataset.  This stresses
@@ -499,12 +501,14 @@ dataset_writeAll_cuda(void)
     /* setup file access template */
     acc_tpl = H5Pcreate(H5P_FILE_ACCESS);
     VRFY((acc_tpl >= 0), "H5Pcreate H5P_FILE_ACCESS");
-    ret = H5Pset_fapl_mpio(acc_tpl, comm, info);
-    VRFY((ret >= 0), "H5Pset_fapl_mpio");
     ret = H5Pset_all_coll_metadata_ops(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_all_coll_metadata_ops");
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
+
+    /* Set GPU VFD on FAPL */
+    ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
+    VRFY((ret >= 0), "H5Pset_driver_by_name");
 
     /* create the file collectively */
     fid = H5Fcreate(FILENAME, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
@@ -999,12 +1003,14 @@ dataset_readAll_cuda(void)
     /* setup file access template */
     acc_tpl = H5Pcreate(H5P_FILE_ACCESS);
     VRFY((acc_tpl >= 0), "H5Pcreate H5P_FILE_ACCESS");
-    ret = H5Pset_fapl_mpio(acc_tpl, comm, info);
-    VRFY((ret >= 0), "H5Pset_fapl_mpio");
     ret = H5Pset_all_coll_metadata_ops(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_all_coll_metadata_ops");
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
+
+    /* Set GPU VFD on FAPL */
+    ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
+    VRFY((ret >= 0), "H5Pset_driver_by_name");
 
     /* open the file collectively */
     fid = H5Fopen(FILENAME, H5F_ACC_RDONLY, acc_tpl);
@@ -1400,12 +1406,14 @@ dataset_writeInd_cuda(void)
     /* setup file access template */
     acc_tpl = H5Pcreate(H5P_FILE_ACCESS);
     VRFY((acc_tpl >= 0), "H5Pcreate H5P_FILE_ACCESS");
-    ret = H5Pset_fapl_mpio(acc_tpl, comm, info);
-    VRFY((ret >= 0), "H5Pset_fapl_mpio");
     ret = H5Pset_all_coll_metadata_ops(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_all_coll_metadata_ops");
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
+
+    /* Set GPU VFD on FAPL */
+    ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
+    VRFY((ret >= 0), "H5Pset_driver_by_name");
 
     /* create the file collectively */
     fid = H5Fcreate(FILENAME, H5F_ACC_TRUNC, H5P_DEFAULT, acc_tpl);
@@ -1531,12 +1539,14 @@ dataset_readInd_cuda(void)
     /* setup file access template */
     acc_tpl = H5Pcreate(H5P_FILE_ACCESS);
     VRFY((acc_tpl >= 0), "H5Pcreate H5P_FILE_ACCESS");
-    ret = H5Pset_fapl_mpio(acc_tpl, comm, info);
-    VRFY((ret >= 0), "H5Pset_fapl_mpio");
     ret = H5Pset_all_coll_metadata_ops(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_all_coll_metadata_ops");
     ret = H5Pset_coll_metadata_write(acc_tpl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
+
+    /* Set GPU VFD on FAPL */
+    ret = H5Pset_driver_by_name(acc_tpl, "gds", NULL);
+    VRFY((ret >= 0), "H5Pset_driver_by_name");
 
     /* open the file collectively */
     fid = H5Fopen(FILENAME, H5F_ACC_RDONLY, acc_tpl);
@@ -1646,12 +1656,14 @@ extend_writeInd2_cuda(void)
     /* setup file access template */
     fapl = H5Pcreate(H5P_FILE_ACCESS);
     VRFY((fapl >= 0), "H5Pcreate H5P_FILE_ACCESS");
-    ret = H5Pset_fapl_mpio(fapl, comm, info);
-    VRFY((ret >= 0), "H5Pset_fapl_mpio");
     ret = H5Pset_all_coll_metadata_ops(fapl, true);
     VRFY((ret >= 0), "H5Pset_all_coll_metadata_ops");
     ret = H5Pset_coll_metadata_write(fapl, true);
     VRFY((ret >= 0), "H5Pset_coll_metadata_write");
+
+    /* Set GPU VFD on FAPL */
+    ret = H5Pset_driver_by_name(fapl, "gds", NULL);
+    VRFY((ret >= 0), "H5Pset_driver_by_name");
 
     /* create the file collectively */
     fid = H5Fcreate(FILENAME, H5F_ACC_TRUNC, H5P_DEFAULT, fapl);
