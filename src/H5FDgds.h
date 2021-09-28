@@ -20,7 +20,7 @@
 #include <hdf5.h>
 
 #define H5FD_GDS_NAME  "gds"
-#define H5FD_GDS_VALUE (H5_VFD_RESERVED + 1) /* TODO: reserve an ID value with the HDF Group */
+#define H5FD_GDS_VALUE ((H5FD_class_value_t)(512))
 
 #ifdef __cplusplus
 extern "C" {
