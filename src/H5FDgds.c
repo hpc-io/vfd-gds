@@ -1906,7 +1906,7 @@ H5FD__gds_ctl(H5FD_t *_file, uint64_t op_code, uint64_t flags, const void *input
         case H5FD_CTL__MEM_COPY:
         {
             H5FD_ctl_memcpy_args_t *copy_args = (H5FD_ctl_memcpy_args_t *)input;
-            cudaMemcpyKind cpyKind;
+            enum cudaMemcpyKind cpyKind;
             hbool_t src_on_device = FALSE;
             hbool_t dst_on_device = FALSE;
             const void *src;
