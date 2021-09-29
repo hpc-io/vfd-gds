@@ -998,7 +998,7 @@ H5FD__gds_query(const H5FD_t *_f, unsigned long *flags /* out */)
             H5FD_FEAT_SUPPORTS_SWMR_IO; /* VFD supports the single-writer/multiple-readers (SWMR) pattern   */
         *flags |= H5FD_FEAT_DEFAULT_VFD_COMPATIBLE; /* VFD creates a file which can be opened with the default
                                                        VFD      */
-        *flags |= H5FD_FEAT_SPECIAL_MEMMANAGE; /* VFD uses CUDA memory management routines */
+        *flags |= H5FD_FEAT_MEMMANAGE; /* VFD uses CUDA memory management routines */
     }
 
     H5FD_GDS_FUNC_LEAVE_API;
