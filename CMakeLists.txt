@@ -317,6 +317,14 @@ option(BUILD_DOCUMENTATION "Build documentation." ON)
 #endif()
 
 #-----------------------------------------------------------------------------
+# Examples
+#-----------------------------------------------------------------------------
+option(BUILD_EXAMPLES "Build examples." ON)
+if(BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+
+#-----------------------------------------------------------------------------
 # Testing
 #-----------------------------------------------------------------------------
 option(BUILD_TESTING "Build testing." ON)
