@@ -23,7 +23,8 @@ jobs:
     - name: Install GDS
       run: |
         # nvidia-smi -q | grep CUDA | awk '{print $4}' | sed 's/\./-/'
-        sudo apt-get install cuda-toolkit-11-2
+        sudo apt-get install gds-tools
+        #sudo apt-get install cuda-toolkit-11-2
     - name: Install HDF5
       run: |
         cmake --version
