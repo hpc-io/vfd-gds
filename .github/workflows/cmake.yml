@@ -44,6 +44,7 @@ jobs:
         LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
       run: |
         set
+        ls -lrv /usr/local/
         mkdir build
         cd build
         cmake .. -DHDF5_DIR=/usr/local
