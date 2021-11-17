@@ -18,6 +18,8 @@
  *          buffer.  The main system support this feature is Linux.
  */
 
+#define _GNU_SOURCE /* For O_DIRECT flag */
+
 #include <fcntl.h>
 #include <assert.h>
 #include <stdlib.h>
