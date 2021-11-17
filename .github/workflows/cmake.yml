@@ -1,4 +1,4 @@
-name: Test HDF5 GPU VFD
+name: Test HDF5 GPUDirect Storage VFD
 
 # Controls when the action will run. 
 on:
