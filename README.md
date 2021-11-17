@@ -13,7 +13,7 @@
     * [Dynamically loaded by FAPL](#Dynamic-load-fapl)
     * [Dynamically loaded by environment variable](#Dynamic-load-variable)
     * [Usage](#Driver-Usage)
-4. [Known Issues and Limitations](#4-Issues-And-Limitations)
+4. [Known Issues and Limitations](#4-Known-Issues-And-Limitations)
 5. [More Information](#5-More-Information)
 
 ## 1. Description
