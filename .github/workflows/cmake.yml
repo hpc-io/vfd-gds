@@ -20,6 +20,10 @@ jobs:
       uses: Jimver/cuda-toolkit@v0.2.4
       with:
         cuda: '11.2.2'
+    - name: Install GDS
+      run: |
+        nvidia-smi -q | grep CUDA | awk '{print $4}' | sed 's/\./-/'
+        !sudo apt-get install cuda-toolkit-11-2        
     - name: Install HDF5
       run: |
         cmake --version
