@@ -22,6 +22,10 @@ jobs:
         path: hdf5
     - name: Install dependencies
       run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin libopenmpi-dev
+    - name: Install CUDA        
+      uses: Jimver/cuda-toolkit@v0.2.4
+      with:
+        cuda: '11.2.2'
     - name: Install HDF5
       run: |
         cmake --version
@@ -31,14 +35,6 @@ jobs:
         sudo make -j2 install
         cd ..
         git rev-parse HEAD > git.txt
-    - name: Install CUDA        
-      uses: Jimver/cuda-toolkit@v0.2.4
-      with:
-        cuda: '11.2.2'
-      run: |
-        echo "Installed cuda version is: ${{steps.cuda-toolkit.outputs.cuda}}"
-        echo "Cuda install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
-        nvcc -V
       
     - name: Install vfd-gds
       env:
