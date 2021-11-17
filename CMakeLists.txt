@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 2.8.12.2 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+# cmake_minimum_required(VERSION 2.8.12.2 FATAL_ERROR)
 
 # Setup cmake policies.
 foreach(policy
@@ -26,7 +27,9 @@ if(NOT DEFINED CMAKE_MACOSX_RPATH)
   set(CMAKE_MACOSX_RPATH 0)
 endif()
 
-project(HDF5_VFD_GDS C)
+# project(HDF5_VFD_GDS C)
+project(HDF5_VFD_GDS LANGUAGES CUDA)
+
 
 #------------------------------------------------------------------------------
 # Setup install and output Directories
