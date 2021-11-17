@@ -13,7 +13,7 @@
     * [Dynamically loaded by FAPL](#Dynamic-load-fapl)
     * [Dynamically loaded by environment variable](#Dynamic-load-variable)
     * [Usage](#Driver-Usage)
-4. [Known Issues and Limitations](#4-Issues-And-Limitations)
+4. [Known Issues and Limitations](#4-Known-Issues-And-Limitations)
 5. [More Information](#5-More-Information)
 
 ## 1. Description
@@ -53,7 +53,7 @@ CMake version 2.8.12.2 or greater is required for building the driver.
 After obtaining the driver's source code, you can create a build directory
 within the source tree and run the `ccmake` or `cmake` command from it:
 
-    cd vfd-gds
+    cd vfd-gds-X
     mkdir build
     cd build
     ccmake ..
