@@ -1,16 +1,10 @@
 name: Test HDF5 GPUDirect Storage VFD
-
-# Controls when the action will run. 
 on:
-  # Triggers the workflow on push or pull request events for the develop branch
   push:
     branches: [ master ]
-  # Allows you to run this workflow manually from the Actions tab    
   workflow_dispatch:
 jobs:
-  # This workflow contains a single job called "build"
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
     steps:
     - name: Checkout vfd-gds
@@ -41,8 +35,6 @@ jobs:
         CXX: mpic++
         CC: mpicc
         HDF5_PLUGIN_PATH: /usr/local/lib
-        HDF5_VOL_CONNECTOR: async under_vol=0\;under_info={}
-        LD_PRELOAD: /usr/local/lib/libabt.so
         LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
       run: |
         set
@@ -52,9 +44,3 @@ jobs:
         sudo make -j2 install
         ls /usr/local/lib
         ctest --output-on-failure
-        
-    - name: Upload
-      uses: actions/upload-artifact@v2
-      with:
-        name: git.txt
-        path: ${{ runner.workspace }}/vol-async/hdf5/git.txt
