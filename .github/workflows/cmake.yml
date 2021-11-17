@@ -16,15 +16,17 @@ jobs:
         path: hdf5
     - name: Install dependencies
       run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin libopenmpi-dev
-    - name: Install CUDA        
-      uses: Jimver/cuda-toolkit@v0.2.4
-      with:
-        cuda: '11.2.2'
-    - name: Install GDS
+    # - name: Install CUDA        
+    #  uses: Jimver/cuda-toolkit@v0.2.4
+    #  with:
+    #    cuda: '11.2.2'
+    - name: Install GDS/CUDA
       run: |
-        # nvidia-smi -q | grep CUDA | awk '{print $4}' | sed 's/\./-/'
-        sudo apt-get install gds-tools
-        #sudo apt-get install cuda-toolkit-11-2
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+        sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600         sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
+sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
+        sudo apt-get update
+        sudo apt-get -y install cuda
     - name: Install HDF5
       run: |
         cmake --version
