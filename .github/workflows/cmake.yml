@@ -1,0 +1,64 @@
+name: Test HDF5 GPU VFD
+
+# Controls when the action will run. 
+on:
+  # Triggers the workflow on push or pull request events for the develop branch
+  push:
+    branches: [ develop ]
+  # Allows you to run this workflow manually from the Actions tab    
+  workflow_dispatch:
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout vfd-gds
+      uses: actions/checkout@v2
+    - name: Checkout HDF5
+      uses: actions/checkout@v2
+      with:
+        repository: HDFGroup/hdf5
+        path: hdf5
+    - name: Install dependencies
+      run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin libopenmpi-dev
+    - name: Install HDF5
+      run: |
+        cmake --version
+        mkdir hdf5/build
+        cd hdf5/build
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DHDF5_ENABLE_PARALLEL:BOOL=ON -DHDF5_ENABLE_THREADSAFE:BOOL=ON -DALLOW_UNSUPPORTED:BOOL=ON ..
+        sudo make -j2 install
+        cd ..
+        git rev-parse HEAD > git.txt
+    - name: Install CUDA        
+      uses: Jimver/cuda-toolkit@v0.2.4
+      with:
+        cuda: '11.2.2'
+      run: |
+        echo "Installed cuda version is: ${{steps.cuda-toolkit.outputs.cuda}}"
+        echo "Cuda install location: ${{steps.cuda-toolkit.outputs.CUDA_PATH}}"
+        nvcc -V
+      
+    - name: Install vfd-gds
+      env:
+        CXX: mpic++
+        CC: mpicc
+        HDF5_PLUGIN_PATH: /usr/local/lib
+        HDF5_VOL_CONNECTOR: async under_vol=0\;under_info={}
+        LD_PRELOAD: /usr/local/lib/libabt.so
+        LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
+      run: |
+        set
+        mkdir build
+        cd build
+        cmake .. -DHDF5_DIR=/usr/local
+        sudo make -j2 install
+        ls /usr/local/lib
+        ctest --output-on-failure
+        
+    - name: Upload
+      uses: actions/upload-artifact@v2
+      with:
+        name: git.txt
+        path: ${{ runner.workspace }}/vol-async/hdf5/git.txt
