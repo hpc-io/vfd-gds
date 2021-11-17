@@ -53,7 +53,7 @@ CMake version 2.8.12.2 or greater is required for building the driver.
 After obtaining the driver's source code, you can create a build directory
 within the source tree and run the `ccmake` or `cmake` command from it:
 
-    cd vfd-gds-X
+    cd vfd-gds
     mkdir build
     cd build
     ccmake ..
