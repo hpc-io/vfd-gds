@@ -42,6 +42,7 @@ jobs:
       env:
         HDF5_PLUGIN_PATH: /usr/local/lib
         LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
+        CUDACXX: /usr/local/cuda/bin/nvcc
       run: |
         set
         ls -lrv /usr/local/
