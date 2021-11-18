@@ -28,7 +28,7 @@ if(NOT DEFINED CMAKE_MACOSX_RPATH)
 endif()
 
 # project(HDF5_VFD_GDS C)
-project(HDF5_VFD_GDS LANGUAGES CUDA)
+project(HDF5_VFD_GDS LANGUAGES CUDA C CXX)
 
 
 #------------------------------------------------------------------------------

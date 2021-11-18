@@ -46,7 +46,6 @@ jobs:
         CUDACXX: /usr/local/cuda-11.5/bin/nvcc
       run: |
         set
-        find /usr/local/
         mkdir build
         cd build
         cmake .. -DHDF5_DIR=/usr/local
