@@ -15,7 +15,8 @@ jobs:
         repository: HDFGroup/hdf5
         path: hdf5
     - name: Install dependencies
-      run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin libopenmpi-dev
+      run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin libopenmpi-dev libpthread-stubs0-dev
+
     # - name: Install CUDA        
     #  uses: Jimver/cuda-toolkit@v0.2.4
     #  with:
@@ -43,8 +44,6 @@ jobs:
         HDF5_PLUGIN_PATH: /usr/local/lib
         LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
         CUDACXX: /usr/local/cuda/bin/nvcc
-        CXX: mpic++
-        CC: mpicc
       run: |
         set
         ls -lrv /usr/local/

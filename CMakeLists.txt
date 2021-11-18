@@ -70,7 +70,8 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${HDF5_VFD_GDS_CMAKE_MODULE_PATH})
 #------------------------------------------------------------------------------
 # Locate CUDA
 #------------------------------------------------------------------------------
-find_package (CUDA REQUIRED)
+find_package(Threads REQUIRED)
+find_package(CUDA REQUIRED)
 
 # Set Cufile installation directory to Cuda installation directory by default
 set (HDF5_VFD_GDS_CUFILE_DIR ${CUDA_TOOLKIT_ROOT_DIR} CACHE PATH "Cufile installation directory for Nvidia GDS support")
