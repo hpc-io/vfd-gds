@@ -43,6 +43,8 @@ jobs:
         HDF5_PLUGIN_PATH: /usr/local/lib
         LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
         CUDACXX: /usr/local/cuda/bin/nvcc
+        CXX: mpic++
+        CC: mpicc
       run: |
         set
         ls -lrv /usr/local/
