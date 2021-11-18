@@ -43,10 +43,10 @@ jobs:
       env:
         HDF5_PLUGIN_PATH: /usr/local/lib
         LD_LIBRARY_PATH: /usr/local/lib:$LD_LIBRARY_PATH
-        CUDACXX: /usr/local/cuda/bin/nvcc
+        CUDACXX: /usr/local/cuda-11.5/bin/nvcc
       run: |
         set
-        ls -lrv /usr/local/
+        find /usr/local/
         mkdir build
         cd build
         cmake .. -DHDF5_DIR=/usr/local
