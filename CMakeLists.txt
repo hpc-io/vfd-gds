@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 2.8.12.2 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
+# cmake_minimum_required(VERSION 2.8.12.2 FATAL_ERROR)
 
 # Setup cmake policies.
 foreach(policy
@@ -26,7 +27,9 @@ if(NOT DEFINED CMAKE_MACOSX_RPATH)
   set(CMAKE_MACOSX_RPATH 0)
 endif()
 
-project(HDF5_VFD_GDS C)
+# project(HDF5_VFD_GDS C)
+project(HDF5_VFD_GDS LANGUAGES CUDA C CXX)
+
 
 #------------------------------------------------------------------------------
 # Setup install and output Directories
@@ -67,9 +70,10 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${HDF5_VFD_GDS_CMAKE_MODULE_PATH})
 #------------------------------------------------------------------------------
 # Locate CUDA
 #------------------------------------------------------------------------------
-find_package (CUDA REQUIRED)
+find_package(Threads REQUIRED)
+find_package(CUDA REQUIRED)
 
-# Set Cufile installation directory to Cuda installation directory by default
+# Set Cufile installation directory to CUDA installation directory by default
 set (HDF5_VFD_GDS_CUFILE_DIR ${CUDA_TOOLKIT_ROOT_DIR} CACHE PATH "Cufile installation directory for Nvidia GDS support")
 
 # Try to locate cufile library
