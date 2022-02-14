@@ -44,8 +44,8 @@
 #include "H5FDgds.h"     /* cuda gds file driver     */
 #include "H5FDgds_err.h" /* error handling           */
 
-// #define ENABLE_BLOCKED_IO
-// #define ENABLE_LOW_LEVEL_STATS
+#define ENABLE_BLOCKED_IO
+#define ENABLE_LOW_LEVEL_STATS
 
 #if defined(ENABLE_LOW_LEVEL_STATS)
 
@@ -190,6 +190,11 @@ read_thread_fn(void *data)
      * td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
      */
 
+#if defined(ENABLE_LOW_LEVEL_STATS)
+    double io_time = gettime_ms();
+    double io_size = td->size;
+#endif
+
 #if defined(ENABLE_BLOCKED_IO)
     while (td->size > 0) {
         if (td->size > td->block_size) {
@@ -209,6 +214,13 @@ read_thread_fn(void *data)
     assert(ret > 0);
 #endif
 
+#if defined(ENABLE_LOW_LEVEL_STATS)
+    io_time = gettime_ms() - io_time;
+    double io_bw = io_size / io_time; // (bytes/ms)
+    io_bw = (io_bw * 1000) / (1024*1024*1024); // (GiB/s)
+    printf("thread_io_stats: %.3lf ms (%.3lf GiB/s)\n", io_time, io_bw);
+#endif
+
     /*
      * fprintf(stderr, "read success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
      * td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
@@ -223,10 +235,20 @@ write_thread_fn(void *data)
     ssize_t        ret;
     thread_data_t *td = (thread_data_t *)data;
 
+    // CUfileError_t status;
+    // status = cuFileBufRegister(td->wr_devPtr, td->size, 0);
+    // printf("thread cubufreg status: %d, %d\n", status.err, status.cu_err);
+    // printf("thread cubufreg status: %s, %d\n", cufileop_status_error(status.err), status.cu_err);
+
     /*
      * fprintf(stderr, "wrt thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
      * td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
      */
+
+#if defined(ENABLE_LOW_LEVEL_STATS)
+    double io_time = gettime_ms();
+    double io_size = td->size;
+#endif
 
 #if defined(ENABLE_BLOCKED_IO)
     while (td->size > 0) {
@@ -245,6 +267,13 @@ write_thread_fn(void *data)
 #else
     ret = cuFileWrite(td->cfr_handle, td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
     assert(ret > 0);
+#endif
+
+#if defined(ENABLE_LOW_LEVEL_STATS)
+    io_time = gettime_ms() - io_time;
+    double io_bw = io_size / io_time; // (bytes/ms)
+    io_bw = (io_bw * 1000) / (1024*1024*1024); // (GiB/s)
+    printf("thread_io_stats: %.3lf ms (%.3lf GiB/s)\n", io_time, io_bw);
 #endif
 
     /*
@@ -1260,7 +1289,7 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
             }
 
 #if defined(ENABLE_LOW_LEVEL_STATS)
-            double start_pthread_create_time = gettime_ms();
+            double pthread_create_time = gettime_ms();
 #endif
 
             for (int ii = 0; ii < io_threads; ii++) {
@@ -1268,8 +1297,8 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
             }
 
 #if defined(ENABLE_LOW_LEVEL_STATS)
-            start_pthread_create_time = gettime_ms() - start_pthread_create_time;
-            printf("pthread creation took: %lf ms\n", start_pthread_create_time);
+            pthread_create_time = gettime_ms() - pthread_create_time;
+            printf("pthread creation took: %.3lf ms\n", pthread_create_time);
 #endif
 
             for (int ii = 0; ii < io_threads; ii++) {
@@ -1498,18 +1527,19 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
     if (is_device_pointer(buf)) {
-        /* CUfileError_t status; */
-
-        /* TODO: register device memory only once */
-        /*
-         * if (!reg_once) {
-         *   status = cuFileBufRegister(buf, size, 0);
-         *   if (status.err != CU_FILE_SUCCESS) {
-         *     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
-         *   }
-         *   reg_once = true;
-         * }
-         */
+        // CUfileError_t status;
+        // TODO: register device memory only once
+        // 
+        // if (!reg_once) {
+        // status = cuFileBufRegister(buf, size, 0);
+        // printf("cubufreg status: %d, %d\n", status.err, status.cu_err);
+        // printf("cubufreg status: %s, %d\n", cufileop_status_error(status.err), status.cu_err);
+        //   if (status.err != CU_FILE_SUCCESS) {
+        //     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
+        //   }
+        //   reg_once = true;
+        // }
+        
 
         if (io_threads > 0) {
             assert(size != 0);
@@ -1539,10 +1569,15 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                 if (ii == io_threads - 1) {
                     file->td[ii].size = (size_t)(io_chunk + io_chunk_rem);
                 }
+
+                // CUfileError_t status;
+                // status = cuFileBufRegister(file->td[ii].wr_devPtr + file->td[ii].devPtr_offset, file->td[ii].size, 0);
+                // printf("cubufreg status: %d, %d\n", status.err, status.cu_err);
+                // printf("cubufreg status: %s, %d\n", cufileop_status_error(status.err), status.cu_err);
             }
 
 #if defined(ENABLE_LOW_LEVEL_STATS)
-            double start_pthread_create_time = gettime_ms();
+            double pthread_create_time = gettime_ms();
 #endif
 
             for (int ii = 0; ii < io_threads; ii++) {
@@ -1550,8 +1585,8 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
             }
 
 #if defined(ENABLE_LOW_LEVEL_STATS)
-            start_pthread_create_time = gettime_ms() - start_pthread_create_time;
-            printf("pthread creation took: %lf ms\n", start_pthread_create_time);
+            pthread_create_time = gettime_ms() - pthread_create_time;
+            printf("pthread creation took: %.3lf ms\n", pthread_create_time);
 #endif
 
             for (int ii = 0; ii < io_threads; ii++) {
