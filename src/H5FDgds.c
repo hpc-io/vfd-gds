@@ -44,6 +44,23 @@
 #include "H5FDgds.h"     /* cuda gds file driver     */
 #include "H5FDgds_err.h" /* error handling           */
 
+// #define ENABLE_BLOCKED_IO
+// #define ENABLE_LOW_LEVEL_STATS
+
+#if defined(ENABLE_LOW_LEVEL_STATS)
+
+#include <sys/time.h>
+#include <time.h>
+
+inline double gettime_ms()
+{
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC_RAW, &t);
+  return (t.tv_sec+t.tv_nsec*1e-9)*1000;
+}
+
+#endif /* defined(ENABLE_LOW_LEVEL_STATS) */
+
 #define H5FD_GDS (H5FD_gds_init())
 
 /* HDF5 doesn't currently have a driver init callback. Use
@@ -173,6 +190,7 @@ read_thread_fn(void *data)
      * td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
      */
 
+#if defined(ENABLE_BLOCKED_IO)
     while (td->size > 0) {
         if (td->size > td->block_size) {
             ret = cuFileRead(td->cfr_handle, td->rd_devPtr, td->block_size, td->offset, td->devPtr_offset);
@@ -186,6 +204,10 @@ read_thread_fn(void *data)
         }
         assert(ret > 0);
     }
+#else
+    ret = cuFileRead(td->cfr_handle, td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
+    assert(ret > 0);
+#endif
 
     /*
      * fprintf(stderr, "read success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
@@ -206,6 +228,7 @@ write_thread_fn(void *data)
      * td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
      */
 
+#if defined(ENABLE_BLOCKED_IO)
     while (td->size > 0) {
         if (td->size > td->block_size) {
             ret = cuFileWrite(td->cfr_handle, td->wr_devPtr, td->block_size, td->offset, td->devPtr_offset);
@@ -219,6 +242,10 @@ write_thread_fn(void *data)
         }
         assert(ret > 0);
     }
+#else
+    ret = cuFileWrite(td->cfr_handle, td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
+    assert(ret > 0);
+#endif
 
     /*
      * printf("wrt success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
@@ -1232,9 +1259,18 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                 }
             }
 
+#if defined(ENABLE_LOW_LEVEL_STATS)
+            double start_pthread_create_time = gettime_ms();
+#endif
+
             for (int ii = 0; ii < io_threads; ii++) {
                 pthread_create(&file->threads[ii], NULL, &read_thread_fn, &file->td[ii]);
             }
+
+#if defined(ENABLE_LOW_LEVEL_STATS)
+            start_pthread_create_time = gettime_ms() - start_pthread_create_time;
+            printf("pthread creation took: %lf ms\n", start_pthread_create_time);
+#endif
 
             for (int ii = 0; ii < io_threads; ii++) {
                 pthread_join(file->threads[ii], NULL);
@@ -1505,9 +1541,18 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                 }
             }
 
+#if defined(ENABLE_LOW_LEVEL_STATS)
+            double start_pthread_create_time = gettime_ms();
+#endif
+
             for (int ii = 0; ii < io_threads; ii++) {
                 pthread_create(&file->threads[ii], NULL, &write_thread_fn, &file->td[ii]);
             }
+
+#if defined(ENABLE_LOW_LEVEL_STATS)
+            start_pthread_create_time = gettime_ms() - start_pthread_create_time;
+            printf("pthread creation took: %lf ms\n", start_pthread_create_time);
+#endif
 
             for (int ii = 0; ii < io_threads; ii++) {
                 pthread_join(file->threads[ii], NULL);
