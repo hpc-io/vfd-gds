@@ -303,6 +303,7 @@ static herr_t  H5FD__gds_ctl(H5FD_t *_file, uint64_t op_code, uint64_t flags, co
                               void **output);
 
 static const H5FD_class_t H5FD_gds_g = {
+    H5FD_CLASS_VERSION,      /* struct version       */
     H5FD_GDS_VALUE,          /* value                */
     H5FD_GDS_NAME,           /* name                 */
     MAXADDR,                 /* maxaddr              */
@@ -331,6 +332,10 @@ static const H5FD_class_t H5FD_gds_g = {
     H5FD__gds_get_handle,    /* get_handle           */
     H5FD__gds_read,          /* read                 */
     H5FD__gds_write,         /* write                */
+    NULL,                    /* read_vector          */
+    NULL,                    /* write_vector         */
+    NULL,                    /* read_selection       */
+    NULL,                    /* write_selection      */
     H5FD__gds_flush,         /* flush                */
     H5FD__gds_truncate,      /* truncate             */
     H5FD__gds_lock,          /* lock                 */
@@ -1945,7 +1950,7 @@ H5FD__gds_ctl(H5FD_t *_file, uint64_t op_code, uint64_t flags, const void *input
 
     switch (op_code) {
         /* Driver-level memory copy */
-        case H5FD_CTL__MEM_COPY:
+        case H5FD_CTL_MEM_COPY:
         {
             const H5FD_ctl_memcpy_args_t *copy_args = (const H5FD_ctl_memcpy_args_t *)input;
             enum cudaMemcpyKind cpyKind;
@@ -1981,7 +1986,7 @@ H5FD__gds_ctl(H5FD_t *_file, uint64_t op_code, uint64_t flags, const void *input
 
         /* Unknown op code */
         default:
-            if (flags & H5FD_CTL__FAIL_IF_UNKNOWN_FLAG)
+            if (flags & H5FD_CTL_FAIL_IF_UNKNOWN_FLAG)
                 H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_FCNTL, FAIL, "unknown op_code and fail if unknown flag is set");
             break;
     }
