@@ -8,9 +8,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout vfd-gds
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
     - name: Checkout HDF5
-      uses: actions/checkout@v2
+      uses: actions/checkout@v3
       with:
         repository: HDFGroup/hdf5
         path: hdf5
