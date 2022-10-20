@@ -26,7 +26,6 @@ jobs:
         echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
         echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
         echo "LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
-        #sudo apt-get install -y cuda-nvcc-11-8 libcufile-dev-11-8 cuda-libraries-dev-11-8 nvidia-cuda-toolkit
     - name: Install HDF5
       run: |
         cmake --version
