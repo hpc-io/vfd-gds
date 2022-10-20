@@ -1,0 +1,57 @@
+name: Test HDF5 GPUDirect Storage VFD
+on:
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout vfd-gds
+      uses: actions/checkout@v3
+    - name: Checkout HDF5
+      uses: actions/checkout@v3
+      with:
+        repository: HDFGroup/hdf5
+        path: hdf5
+    - name: Install dependencies
+      run: sudo apt-get install ninja-build automake autoconf libtool libtool-bin libopenmpi-dev libpthread-stubs0-dev
+
+    - name: Install GDS/CUDA
+      run: |
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb
+        sudo dpkg -i cuda-keyring_1.0-1_all.deb
+        sudo apt-get update
+        sudo apt-get install -y cuda-nvcc-11-8 libcufile-dev-11-8
+        echo "PATH=/usr/local/cuda/bin${PATH:+:${PATH}}" >> $GITHUB_ENV
+        echo "CUDA_PATH=/usr/local/cuda" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=/usr/local/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH}" >> $GITHUB_ENV
+    - name: Install HDF5
+      run: |
+        cmake --version
+        mkdir hdf5/build
+        cd hdf5/build
+        cmake -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_TESTING:BOOL=OFF \
+              -DENABLE_EXTENDED_TESTS:BOOL=OFF \
+              -DHDF5_BUILD_EXAMPLES:BOOL=OFF \
+              -DHDF5_BUILD_HL_LIB:BOOL=OFF \
+              -DHDF5_BUILD_HL_TOOLS:BOOL=OFF \
+              -DCMAKE_INSTALL_PREFIX=/usr/local \
+              -DHDF5_ENABLE_PARALLEL:BOOL=ON \
+              -DHDF5_ENABLE_THREADSAFE:BOOL=ON \
+              -DALLOW_UNSUPPORTED:BOOL=ON \
+              ..
+        sudo make -j2 install
+        cd ..
+        git rev-parse HEAD > git.txt
+      
+    - name: Install vfd-gds
+      env:
+        HDF5_PLUGIN_PATH: /usr/local/lib
+        CC: mpicc
+      run: |
+        mkdir build && cd $_
+        cmake -DHDF5_DIR=/usr/local ..
+        sudo make -j2 install
+        #ctest --output-on-failure
