@@ -31,7 +31,7 @@ built as a plugin library that is external to HDF5.
 To build the GDS VFD, the following libraries are required:
 
 + `libhdf5` - The [HDF5](https://www.hdfgroup.org/downloads/hdf5/) library.
-            Minimum version required is 1.13.0. HDF5 must be compiled with
+            Minimum version required is 1.14.0. HDF5 must be compiled with
             support for parallel I/O if building the GDS VFD's tests. Shared
             libraries must be enabled if loading the GDS VFD as an HDF5 plugin.
 
