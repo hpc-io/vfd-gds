@@ -51,7 +51,8 @@ if(HDF5_VFD_GDS_ENABLE_COVERAGE)
   set_coverage_flags(hdf5_vfd_gds)
 endif()
 
-set(HDF5_VFD_GDS_EXPORTED_LIBS hdf5_vfd_gds ${HDF5_VFD_GDS_EXPORTED_LIBS} PARENT_SCOPE)
+set(HDF5_VFD_GDS_EXPORTED_LIBS hdf5_vfd_gds ${HDF5_VFD_GDS_EXPORTED_LIBS})
+set(HDF5_VFD_GDS_EXPORTED_LIBS ${HDF5_VFD_GDS_EXPORTED_LIBS} PARENT_SCOPE)
 
 #-----------------------------------------------------------------------------
 # Specify project header files to be installed
