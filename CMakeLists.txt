@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.23 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
 # Setup cmake policies.
 foreach(policy
@@ -69,18 +69,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${HDF5_VFD_GDS_CMAKE_MODULE_PATH})
 #------------------------------------------------------------------------------
 find_package (CUDA REQUIRED)
 
-# Set Cufile installation directory to Cuda installation directory by default
-set (HDF5_VFD_GDS_CUFILE_DIR ${CUDA_TOOLKIT_ROOT_DIR} CACHE PATH "Cufile installation directory for Nvidia GDS support")
-
 # Try to locate cufile library
-find_library (HDF5_VFD_GDS_CUFILE_LIB
-  NAMES
-    cufile
-  HINTS
-    "${HDF5_VFD_GDS_CUFILE_DIR}/lib"
-    "${HDF5_VFD_GDS_CUFILE_DIR}/lib64"
-  REQUIRED
-)
+find_package(CUDAToolKit REQUIRED)
+target_link_libraries(hdf5_vfd_gds_library_target PRIVATE CUDA::cuFile)
 
 set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
