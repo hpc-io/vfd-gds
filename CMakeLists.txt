@@ -32,20 +32,20 @@ project(HDF5_VFD_GDS C)
 # Setup install and output Directories
 #------------------------------------------------------------------------------
 if(NOT HDF5_VFD_GDS_INSTALL_BIN_DIR)
-  set(HDF5_VFD_GDS_INSTALL_BIN_DIR ${CMAKE_INSTALL_PREFIX}/bin)
+  set(HDF5_VFD_GDS_INSTALL_BIN_DIR ${CMAKE_INSTALL_BINDIR})
 endif()
 if(NOT HDF5_VFD_GDS_INSTALL_LIB_DIR)
-  set(HDF5_VFD_GDS_INSTALL_LIB_DIR ${CMAKE_INSTALL_PREFIX}/lib)
+  set(HDF5_VFD_GDS_INSTALL_LIB_DIR ${CMAKE_INSTALL_LIBDIR})
 endif()
 if(NOT HDF5_VFD_GDS_INSTALL_INCLUDE_DIR)
   # Interface include will default to prefix/include
   set(HDF5_VFD_GDS_INSTALL_INTERFACE include)
-  set(HDF5_VFD_GDS_INSTALL_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/include)
+  set(HDF5_VFD_GDS_INSTALL_INCLUDE_DIR ${CMAKE_INSTALL_INCLUDEDIR})
 else()
   set(HDF5_VFD_GDS_INSTALL_INTERFACE ${HDF5_VFD_GDS_INSTALL_INCLUDE_DIR})
 endif()
 if(NOT HDF5_VFD_GDS_INSTALL_DATA_DIR)
-  set(HDF5_VFD_GDS_INSTALL_DATA_DIR ${CMAKE_INSTALL_PREFIX}/share)
+  set(HDF5_VFD_GDS_INSTALL_DATA_DIR ${CMAKE_INSTALL_DATAROOTDIR})
 endif()
 
 # Setting this ensures that "make install" will leave rpaths to external
@@ -149,7 +149,7 @@ message(STATUS "Configuring ${HDF5_VFD_GDS_PACKAGE} v${HDF5_VFD_GDS_VERSION_FULL
 #------------------------------------------------------------------------------
 if(APPLE AND NOT HDF5_VFD_GDS_EXTERNALLY_CONFIGURED)
   # We are doing a unix-style install i.e. everything will be installed in
-  # CMAKE_INSTALL_PREFIX/bin and CMAKE_INSTALL_PREFIX/lib etc. as on other unix
+  # ${CMAKE_INSTALL_BINDIR} and ${CMAKE_INSTALL_LIBDIR} etc. as on other unix
   # platforms. We still need to setup CMAKE_INSTALL_NAME_DIR correctly so that
   # the binaries point to appropriate location for the libraries.
 
