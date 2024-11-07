@@ -45,6 +45,7 @@ target_link_libraries(hdf5_vfd_gds
   ${HDF5_VFD_GDS_EXPORTED_LIBS}
   ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
   ${HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES}
+  PRIVATE CUDA::cuFile
   )
 hdf5_vfd_gds_set_lib_options(hdf5_vfd_gds "hdf5_vfd_gds" ${HDF5_VFD_GDS_LIBTYPE})
 if(HDF5_VFD_GDS_ENABLE_COVERAGE)
