@@ -73,7 +73,6 @@ find_package (CUDA REQUIRED)
 
 # Try to locate cufile library
 find_package(CUDAToolKit REQUIRED)
-target_link_libraries(${HDF5_VFD_GDS_CUFILE_LIB} PRIVATE CUDA::cuFile)
 
 set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
