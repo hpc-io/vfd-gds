@@ -31,6 +31,8 @@ project(HDF5_VFD_GDS C)
 #------------------------------------------------------------------------------
 # Setup install and output Directories
 #------------------------------------------------------------------------------
+include(GNUInstallDirs)
+
 if(NOT HDF5_VFD_GDS_INSTALL_BIN_DIR)
   set(HDF5_VFD_GDS_INSTALL_BIN_DIR ${CMAKE_INSTALL_BINDIR})
 endif()
