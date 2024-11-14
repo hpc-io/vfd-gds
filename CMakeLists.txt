@@ -75,12 +75,10 @@ find_package(CUDAToolKit REQUIRED)
 
 set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
-  ${CUDA_INCLUDE_DIRS}
+  ${CUDAToolkit_INCLUDE_DIRS}
 )
 set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
-  ${CUDA_LIBRARIES}
-  ${HDF5_VFD_GDS_CUFILE_LIB}
 )
 
 #------------------------------------------------------------------------------
