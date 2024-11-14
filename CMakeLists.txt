@@ -69,7 +69,6 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${HDF5_VFD_GDS_CMAKE_MODULE_PATH})
 #------------------------------------------------------------------------------
 # Locate CUDA
 #------------------------------------------------------------------------------
-find_package (CUDA REQUIRED)
 
 # Try to locate cufile library
 find_package(CUDAToolKit REQUIRED)
