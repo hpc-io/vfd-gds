@@ -71,7 +71,7 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${HDF5_VFD_GDS_CMAKE_MODULE_PATH})
 #------------------------------------------------------------------------------
 
 # Try to locate cufile library
-find_package(CUDAToolKit REQUIRED)
+find_package(CUDAToolkit REQUIRED)
 
 set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
