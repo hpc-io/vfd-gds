@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.23 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.25 FATAL_ERROR)
 
 # Setup cmake policies.
 foreach(policy
@@ -31,21 +31,23 @@ project(HDF5_VFD_GDS C)
 #------------------------------------------------------------------------------
 # Setup install and output Directories
 #------------------------------------------------------------------------------
+include(GNUInstallDirs)
+
 if(NOT HDF5_VFD_GDS_INSTALL_BIN_DIR)
-  set(HDF5_VFD_GDS_INSTALL_BIN_DIR ${CMAKE_INSTALL_PREFIX}/bin)
+  set(HDF5_VFD_GDS_INSTALL_BIN_DIR ${CMAKE_INSTALL_BINDIR})
 endif()
 if(NOT HDF5_VFD_GDS_INSTALL_LIB_DIR)
-  set(HDF5_VFD_GDS_INSTALL_LIB_DIR ${CMAKE_INSTALL_PREFIX}/lib)
+  set(HDF5_VFD_GDS_INSTALL_LIB_DIR ${CMAKE_INSTALL_LIBDIR})
 endif()
 if(NOT HDF5_VFD_GDS_INSTALL_INCLUDE_DIR)
   # Interface include will default to prefix/include
   set(HDF5_VFD_GDS_INSTALL_INTERFACE include)
-  set(HDF5_VFD_GDS_INSTALL_INCLUDE_DIR ${CMAKE_INSTALL_PREFIX}/include)
+  set(HDF5_VFD_GDS_INSTALL_INCLUDE_DIR ${CMAKE_INSTALL_INCLUDEDIR})
 else()
   set(HDF5_VFD_GDS_INSTALL_INTERFACE ${HDF5_VFD_GDS_INSTALL_INCLUDE_DIR})
 endif()
 if(NOT HDF5_VFD_GDS_INSTALL_DATA_DIR)
-  set(HDF5_VFD_GDS_INSTALL_DATA_DIR ${CMAKE_INSTALL_PREFIX}/share)
+  set(HDF5_VFD_GDS_INSTALL_DATA_DIR ${CMAKE_INSTALL_DATAROOTDIR})
 endif()
 
 # Setting this ensures that "make install" will leave rpaths to external
@@ -67,29 +69,16 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${HDF5_VFD_GDS_CMAKE_MODULE_PATH})
 #------------------------------------------------------------------------------
 # Locate CUDA
 #------------------------------------------------------------------------------
-find_package (CUDA REQUIRED)
-
-# Set Cufile installation directory to Cuda installation directory by default
-set (HDF5_VFD_GDS_CUFILE_DIR ${CUDA_TOOLKIT_ROOT_DIR} CACHE PATH "Cufile installation directory for Nvidia GDS support")
 
 # Try to locate cufile library
-find_library (HDF5_VFD_GDS_CUFILE_LIB
-  NAMES
-    cufile
-  HINTS
-    "${HDF5_VFD_GDS_CUFILE_DIR}/lib"
-    "${HDF5_VFD_GDS_CUFILE_DIR}/lib64"
-  REQUIRED
-)
+find_package(CUDAToolkit REQUIRED)
 
 set(HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_INCLUDE_DEPENDENCIES}
-  ${CUDA_INCLUDE_DIRS}
+  ${CUDAToolkit_INCLUDE_DIRS}
 )
 set(HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES
   ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
-  ${CUDA_LIBRARIES}
-  ${HDF5_VFD_GDS_CUFILE_LIB}
 )
 
 #------------------------------------------------------------------------------
@@ -158,7 +147,7 @@ message(STATUS "Configuring ${HDF5_VFD_GDS_PACKAGE} v${HDF5_VFD_GDS_VERSION_FULL
 #------------------------------------------------------------------------------
 if(APPLE AND NOT HDF5_VFD_GDS_EXTERNALLY_CONFIGURED)
   # We are doing a unix-style install i.e. everything will be installed in
-  # CMAKE_INSTALL_PREFIX/bin and CMAKE_INSTALL_PREFIX/lib etc. as on other unix
+  # ${CMAKE_INSTALL_BINDIR} and ${CMAKE_INSTALL_LIBDIR} etc. as on other unix
   # platforms. We still need to setup CMAKE_INSTALL_NAME_DIR correctly so that
   # the binaries point to appropriate location for the libraries.
 
