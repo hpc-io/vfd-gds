@@ -18,7 +18,9 @@
  *          buffer.  The main system support this feature is Linux.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE /* For O_DIRECT flag */
+#endif
 
 #include <fcntl.h>
 #include <assert.h>
@@ -565,17 +567,17 @@ H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size, 
     if (boundary != 0)
         fa_out->mboundary = boundary;
     else
-        fa_out->mboundary = MBOUNDARY_DEF;
+        fa_out->mboundary = H5FD_GDS_MBOUNDARY_DEF;
 
     if (block_size != 0)
         fa_out->fbsize = block_size;
     else
-        fa_out->fbsize = FBSIZE_DEF;
+        fa_out->fbsize = H5FD_GDS_FBSIZE_DEF;
 
     if (cbuf_size != 0)
         fa_out->cbsize = cbuf_size;
     else
-        fa_out->cbsize = CBSIZE_DEF;
+        fa_out->cbsize = H5FD_GDS_CBSIZE_DEF;
 
     /* Set the default to be true for data alignment */
     fa_out->must_align = TRUE;
@@ -669,7 +671,7 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     int              o_flags;
     int              fd   = (-1);
     H5FD_gds_t *     file = NULL;
-    H5FD_gds_fapl_t *fa;
+    const H5FD_gds_fapl_t *fa;
     H5FD_gds_fapl_t  default_fa;
 #ifdef H5_HAVE_WIN32_API
     HFILE                              filehandle;
@@ -865,6 +867,7 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 
     /* Set return value */
     ret_value = (H5FD_t *)file;
+fprintf(stderr, "%s:%u - Successfully opened file w/GDS VFD\n", __func__, __LINE__);
 
 done:
     if (ret_value == NULL) {

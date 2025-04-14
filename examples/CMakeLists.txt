@@ -33,5 +33,6 @@ foreach (example ${examples})
       ${HDF5_VFD_GDS_EXPORTED_LIBS}
       ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
       ${HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES}
+      CUDA::cudart
   )
 endforeach()

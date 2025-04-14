@@ -28,9 +28,9 @@ extern "C" {
 
 /* Default values for memory boundary, file block size, and maximal copy buffer size.
  * Application can set these values through the function H5Pset_fapl_gds. */
-#define MBOUNDARY_DEF 4096
-#define FBSIZE_DEF    4096
-#define CBSIZE_DEF    16 * 1024 * 1024
+#define H5FD_GDS_MBOUNDARY_DEF 4096
+#define H5FD_GDS_FBSIZE_DEF    4096
+#define H5FD_GDS_CBSIZE_DEF    (16 * 1024 * 1024)
 
 herr_t H5Pset_fapl_gds(hid_t fapl_id, size_t alignment, size_t block_size, size_t cbuf_size);
 herr_t H5Pget_fapl_gds(hid_t fapl_id, size_t *boundary /*out*/, size_t *block_size /*out*/,
