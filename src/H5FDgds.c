@@ -695,7 +695,16 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     /* Build the open flags */
     o_flags = (H5F_ACC_RDWR & flags) ? O_RDWR : O_RDONLY;
     if (H5F_ACC_TRUNC & flags)
-        o_flags |= O_TRUNC;
+        /* If the user is truncating the file, we also need to pass O_CREAT because the
+         * incoming flags might not contain H5F_ACC_CREAT. For example, we may be being called
+         * from H5FCreate() which implicitly implies H5F_ACC_CREAT and therefore errors if this
+         * flag is passed. If we don't pass O_CREAT, then open() below will fail if the file
+         * does not exist.
+         *
+         * We also enable read-write privileges since a truncate with read-only is pretty
+         * pointless.
+         */
+        o_flags |= (O_TRUNC | O_CREAT | O_RDWR);
     if (H5F_ACC_CREAT & flags)
         o_flags |= O_CREAT;
     if (H5F_ACC_EXCL & flags)
