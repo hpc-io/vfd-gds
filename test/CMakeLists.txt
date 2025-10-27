@@ -1,5 +1,4 @@
-#------------------------------------------------------------------------------
-# Include source and build directories
+#------------------------------------------------------------------------------ # Include source and build directories
 #------------------------------------------------------------------------------
 include_directories(
   ${CMAKE_CURRENT_SOURCE_DIR}
@@ -42,6 +41,7 @@ foreach(vfd_test ${vfd_gds_tests})
       ${HDF5_VFD_GDS_EXPORTED_LIBS}
       ${HDF5_VFD_GDS_EXT_LIB_DEPENDENCIES}
       ${HDF5_VFD_GDS_EXT_PKG_DEPENDENCIES}
+      CUDA::cudart
   )
 endforeach()
 

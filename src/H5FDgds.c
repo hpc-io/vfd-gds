@@ -18,7 +18,9 @@
  *          buffer.  The main system support this feature is Linux.
  */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE /* For O_DIRECT flag */
+#endif
 
 #include <fcntl.h>
 #include <assert.h>
@@ -61,19 +63,6 @@ do {                           \
 #include <fcntl.h>
 #endif /* ADVISE_OS_DISABLE_READ_CACHE */
 
-typedef struct thread_data_t {
-    union {
-        void *      rd_devPtr; /* read device address */
-        const void *wr_devPtr; /* write device address */
-    };
-    int            fd;
-    CUfileHandle_t cfr_handle;    /* cuFile Handle */
-    off_t          offset;        /* File offset */
-    off_t          devPtr_offset; /* device address offset */
-    size_t         block_size;    /* I/O chunk size */
-    size_t         size;          /* Read/Write size */
-} thread_data_t;
-
 static bool cu_file_driver_opened = false;
 
 /* static bool reg_once = false; */
@@ -102,14 +91,6 @@ static htri_t ignore_disabled_file_locks_s = FAIL;
 #define H5FD_GDS_POSIX_CREATE_MODE_RW 0666
 #endif
 
-/* Driver-specific file access properties */
-typedef struct H5FD_gds_fapl_t {
-    size_t  mboundary;  /* Memory boundary for alignment    */
-    size_t  fbsize;     /* File system block size      */
-    size_t  cbsize;     /* Maximal buffer size for copying user data  */
-    hbool_t must_align; /* Decides if data alignment is required        */
-} H5FD_gds_fapl_t;
-
 /*
  * The description of a file belonging to this driver. The `eoa' and `eof'
  * determine the amount of hdf5 address space in use and the high-water mark
@@ -127,16 +108,9 @@ typedef struct H5FD_gds_t {
     int             fd;  /*the unix file      */
     haddr_t         eoa; /*end of allocated region  */
     haddr_t         eof; /*end of file; current file size*/
-    haddr_t         pos; /*current file I/O position  */
-    int             op;  /*last operation    */
-    H5FD_gds_fapl_t fa;  /*file access properties  */
     hbool_t         ignore_disabled_file_locks;
 
     CUfileHandle_t cf_handle;      /* cufile handle */
-    int            num_io_threads; /* number of io threads for cufile */
-    size_t         io_block_size;  /* io block size or cufile */
-    pthread_t *    threads;
-    thread_data_t *td;
 
 #ifndef H5_HAVE_WIN32_API
     /*
@@ -160,75 +134,6 @@ typedef struct H5FD_gds_t {
 #endif
 
 } H5FD_gds_t;
-
-/* multiple threads for one io request */
-static void *
-read_thread_fn(void *data)
-{
-    ssize_t        ret;
-    thread_data_t *td = (thread_data_t *)data;
-
-    /*
-     * fprintf(stderr, "read thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-     * td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
-     */
-
-    while (td->size > 0) {
-        if (td->size > td->block_size) {
-            ret = cuFileRead(td->cfr_handle, td->rd_devPtr, td->block_size, td->offset, td->devPtr_offset);
-            td->offset += td->block_size;
-            td->devPtr_offset += td->block_size;
-            td->size -= td->block_size;
-        }
-        else {
-            ret      = cuFileRead(td->cfr_handle, td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
-            td->size = 0;
-        }
-        assert(ret > 0);
-    }
-
-    /*
-     * fprintf(stderr, "read success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-     * td->rd_devPtr, td->size, td->offset, td->devPtr_offset);
-     */
-
-    return NULL;
-}
-
-static void *
-write_thread_fn(void *data)
-{
-    ssize_t        ret;
-    thread_data_t *td = (thread_data_t *)data;
-
-    /*
-     * fprintf(stderr, "wrt thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-     * td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
-     */
-
-    while (td->size > 0) {
-        if (td->size > td->block_size) {
-            ret = cuFileWrite(td->cfr_handle, td->wr_devPtr, td->block_size, td->offset, td->devPtr_offset);
-            td->offset += td->block_size;
-            td->devPtr_offset += td->block_size;
-            td->size -= td->block_size;
-        }
-        else {
-            ret      = cuFileWrite(td->cfr_handle, td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
-            td->size = 0;
-        }
-        assert(ret > 0);
-    }
-
-    /*
-     * printf("wrt success thread -- ptr: %p, size: %lu, foffset: %ld, doffset: %ld\n",
-     * td->wr_devPtr, td->size, td->offset, td->devPtr_offset);
-     */
-
-    return NULL;
-}
-
-/* end multiple threads for one io request */
 
 /*
  * These macros check for overflow of various quantities.  These macros
@@ -278,10 +183,6 @@ write_thread_fn(void *data)
 /* Prototypes */
 static hid_t   H5FD_gds_init(void);
 static herr_t  H5FD__gds_term(void);
-static herr_t  H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size,
-                                         H5FD_gds_fapl_t *fa_out);
-static void *  H5FD__gds_fapl_get(H5FD_t *file);
-static void *  H5FD__gds_fapl_copy(const void *_old_fa);
 static H5FD_t *H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr);
 static herr_t  H5FD__gds_close(H5FD_t *_file);
 static int     H5FD__gds_cmp(const H5FD_t *_f1, const H5FD_t *_f2);
@@ -312,9 +213,9 @@ static const H5FD_class_t H5FD_gds_g = {
     NULL,                    /* sb_size              */
     NULL,                    /* sb_encode            */
     NULL,                    /* sb_decode            */
-    sizeof(H5FD_gds_fapl_t), /* fapl_size            */
-    H5FD__gds_fapl_get,      /* fapl_get             */
-    H5FD__gds_fapl_copy,     /* fapl_copy            */
+    0,                       /* fapl_size            */
+    NULL,                    /* fapl_get             */
+    NULL,                    /* fapl_copy            */
     NULL,                    /* fapl_free            */
     0,                       /* dxpl_size            */
     NULL,                    /* dxpl_copy            */
@@ -481,16 +382,17 @@ done:
 herr_t
 H5Pset_fapl_gds(hid_t fapl_id, size_t boundary, size_t block_size, size_t cbuf_size)
 {
-    H5FD_gds_fapl_t fa;
     herr_t          ret_value;
+
+    /* Silence compiler */
+    (void)boundary;
+    (void)block_size;
+    (void)cbuf_size;
 
     if (H5I_GENPROP_LST != H5Iget_type(fapl_id) || TRUE != H5Pisa_class(fapl_id, H5P_FILE_ACCESS))
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADTYPE, FAIL, "not a file access property list");
 
-    if (H5FD__gds_populate_config(boundary, block_size, cbuf_size, &fa) < 0)
-        H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTSET, FAIL, "can't initialize driver configuration info");
-
-    ret_value = H5Pset_driver(fapl_id, H5FD_GDS, &fa);
+    ret_value = H5Pset_driver(fapl_id, H5FD_GDS, NULL);
 
 done:
     H5FD_GDS_FUNC_LEAVE_API;
@@ -512,135 +414,23 @@ herr_t
 H5Pget_fapl_gds(hid_t fapl_id, size_t *boundary /*out*/, size_t *block_size /*out*/,
                 size_t *cbuf_size /*out*/)
 {
-    const H5FD_gds_fapl_t *fa;
-    H5FD_gds_fapl_t        default_fa;
     herr_t                 ret_value = SUCCEED; /* Return value */
 
     if (H5I_GENPROP_LST != H5Iget_type(fapl_id) || TRUE != H5Pisa_class(fapl_id, H5P_FILE_ACCESS))
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADTYPE, FAIL, "not a file access property list");
     if (H5FD_GDS != H5Pget_driver(fapl_id))
         H5FD_GDS_GOTO_ERROR(H5E_PLIST, H5E_BADVALUE, FAIL, "incorrect VFL driver");
-    H5E_BEGIN_TRY
-    {
-        fa = H5Pget_driver_info(fapl_id);
-    }
-    H5E_END_TRY;
-    if (!fa || (H5P_FILE_ACCESS_DEFAULT == fapl_id)) {
-        if (H5FD__gds_populate_config(0, 0, 0, &default_fa) < 0)
-            H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTSET, FAIL, "can't initialize driver configuration info");
-
-        fa = &default_fa;
-    }
 
     if (boundary)
-        *boundary = fa->mboundary;
+        *boundary = 0;
     if (block_size)
-        *block_size = fa->fbsize;
+        *block_size = 0;
     if (cbuf_size)
-        *cbuf_size = fa->cbsize;
+        *cbuf_size = 0;
 
 done:
     H5FD_GDS_FUNC_LEAVE_API;
 } /* end H5Pget_fapl_gds() */
-
-/*-------------------------------------------------------------------------
- * Function:    H5FD__gds_populate_config
- *
- * Purpose:    Populates a H5FD_gds_fapl_t structure with the provided
- *             values, supplying defaults where values are not provided.
- *
- * Return:    Non-negative on success/Negative on failure
- *
- *-------------------------------------------------------------------------
- */
-static herr_t
-H5FD__gds_populate_config(size_t boundary, size_t block_size, size_t cbuf_size, H5FD_gds_fapl_t *fa_out)
-{
-    herr_t ret_value = SUCCEED;
-
-    assert(fa_out);
-
-    memset(fa_out, 0, sizeof(H5FD_gds_fapl_t));
-
-    if (boundary != 0)
-        fa_out->mboundary = boundary;
-    else
-        fa_out->mboundary = MBOUNDARY_DEF;
-
-    if (block_size != 0)
-        fa_out->fbsize = block_size;
-    else
-        fa_out->fbsize = FBSIZE_DEF;
-
-    if (cbuf_size != 0)
-        fa_out->cbsize = cbuf_size;
-    else
-        fa_out->cbsize = CBSIZE_DEF;
-
-    /* Set the default to be true for data alignment */
-    fa_out->must_align = TRUE;
-
-    /* Copy buffer size must be a multiple of file block size */
-    if (fa_out->cbsize % fa_out->fbsize != 0)
-        H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_BADVALUE, FAIL, "copy buffer size must be a multiple of block size");
-
-done:
-    H5FD_GDS_FUNC_LEAVE;
-} /* end H5FD__gds_populate_config() */
-
-/*-------------------------------------------------------------------------
- * Function:  H5FD__gds_fapl_get
- *
- * Purpose:  Returns a file access property list which indicates how the
- *    specified file is being accessed. The return list could be
- *    used to access another file the same way.
- *
- * Return:  Success:  Ptr to new file access property list with all
- *        members copied from the file struct.
- *
- *    Failure:  NULL
- *
- *-------------------------------------------------------------------------
- */
-static void *
-H5FD__gds_fapl_get(H5FD_t *_file)
-{
-    H5FD_gds_t *file = (H5FD_gds_t *)_file;
-    void *      ret_value; /* Return value */
-
-    /* Set return value */
-    ret_value = H5FD__gds_fapl_copy(&(file->fa));
-
-    H5FD_GDS_FUNC_LEAVE_API;
-} /* end H5FD__gds_fapl_get() */
-
-/*-------------------------------------------------------------------------
- * Function:  H5FD__gds_fapl_copy
- *
- * Purpose:  Copies the gds-specific file access properties.
- *
- * Return:  Success:  Ptr to a new property list
- *
- *    Failure:  NULL
- *
- *-------------------------------------------------------------------------
- */
-static void *
-H5FD__gds_fapl_copy(const void *_old_fa)
-{
-    const H5FD_gds_fapl_t *old_fa = (const H5FD_gds_fapl_t *)_old_fa;
-    H5FD_gds_fapl_t *      new_fa = calloc(1, sizeof(H5FD_gds_fapl_t));
-    void *                 ret_value = NULL;
-
-    assert(new_fa);
-
-    /* Copy the general information */
-    memcpy(new_fa, old_fa, sizeof(H5FD_gds_fapl_t));
-
-    ret_value = new_fa;
-
-    H5FD_GDS_FUNC_LEAVE_API;
-} /* end H5FD__gds_fapl_copy() */
 
 /*-------------------------------------------------------------------------
  * Function:  H5FD__gds_open
@@ -663,20 +453,15 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 {
     CUfileError_t status;
     CUfileDescr_t cf_descr;
-    char *        num_io_threads_var;
-    char *        io_block_size_var;
 
     int              o_flags;
     int              fd   = (-1);
     H5FD_gds_t *     file = NULL;
-    H5FD_gds_fapl_t *fa;
-    H5FD_gds_fapl_t  default_fa;
 #ifdef H5_HAVE_WIN32_API
     HFILE                              filehandle;
     struct _BY_HANDLE_FILE_INFORMATION fileinfo;
 #endif
     struct stat     sb;
-    void *          buf1, *buf2;
     H5FD_t *        ret_value = NULL;
 
     H5FD_GDS_INIT;
@@ -700,9 +485,6 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         o_flags |= O_CREAT;
     if (H5F_ACC_EXCL & flags)
         o_flags |= O_EXCL;
-
-    /* Flag for GPUDirect Storage I/O */
-    o_flags |= O_DIRECT;
 
     /* Open the file */
     if ((fd = open(name, o_flags, H5FD_GDS_POSIX_CREATE_MODE_RW)) < 0)
@@ -732,18 +514,6 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     if (NULL == (file = calloc(1, sizeof(H5FD_gds_t))))
         H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_NOSPACE, NULL, "unable to allocate file struct");
 
-    /* Get the driver specific information */
-    H5E_BEGIN_TRY
-    {
-        fa = H5Pget_driver_info(fapl_id);
-    }
-    H5E_END_TRY;
-    if (!fa || (H5P_FILE_ACCESS_DEFAULT == fapl_id)) {
-        if (H5FD__gds_populate_config(0, 0, 0, &default_fa) < 0)
-            H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTSET, NULL, "can't initialize driver configuration info");
-        fa = &default_fa;
-    }
-
     memset((void *)&cf_descr, 0, sizeof(CUfileDescr_t));
     cf_descr.handle.fd = fd;
     cf_descr.type      = CU_FILE_HANDLE_TYPE_OPAQUE_FD;
@@ -752,40 +522,10 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "unable to register file with cufile driver");
     }
 
-    /* DEFAULT io worker params */
-    /* TODO: error checking */
-    file->num_io_threads = 1;
-    file->io_block_size  = 8 * 1024 * 1024;
-    num_io_threads_var   = getenv("H5_GDS_VFD_IO_THREADS");
-    io_block_size_var    = getenv("H5_GDS_VFD_IO_BLOCK_SIZE");
-
-    if (num_io_threads_var) {
-        file->num_io_threads = atoi(num_io_threads_var);
-    }
-
-    if (io_block_size_var) {
-        file->io_block_size = atoi(io_block_size_var);
-    }
-
-    /* TODO: error checking for num_io_threads */
-    /* FIXME: move to set fapl */
-    /*
-     * H5Pget( fapl_id, "H5_GDS_VFD_IO_THREADS", &file->num_io_threads );
-     * H5Pget( fapl_id, "H5_GDS_VFD_IO_BLOCK_SIZE", &file->io_block_size );
-     */
-
-    /* IOThreads */
-    /* TODO: POSSIBLE MEMORY LEAK! figure out how to deal with the the double open H5Fint does */
-    file->td      = (thread_data_t *)malloc((unsigned)file->num_io_threads * sizeof(thread_data_t));
-    file->threads = (pthread_t *)malloc((unsigned)file->num_io_threads * sizeof(pthread_t));
-
     file->fd = fd;
-
     /* FIXME: Possible overflow! */
     file->eof = (haddr_t)sb.st_size;
 
-    file->pos = HADDR_UNDEF;
-    file->op  = OP_UNKNOWN;
 #ifdef H5_HAVE_WIN32_API
     filehandle = _get_osfhandle(fd);
     (void)GetFileInformationByHandle((HANDLE)filehandle, &fileinfo);
@@ -795,9 +535,6 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
     file->device = sb.st_dev;
     file->inode  = sb.st_ino;
 #endif /*H5_HAVE_WIN32_API*/
-    file->fa.mboundary = fa->mboundary;
-    file->fa.fbsize    = fa->fbsize;
-    file->fa.cbsize    = fa->cbsize;
 
     /* Check the file locking flags in the fapl */
     if (ignore_disabled_file_locks_s != FAIL)
@@ -811,60 +548,9 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
             H5FD_GDS_GOTO_ERROR(H5E_VFL, H5E_CANTGET, NULL, "can't get ignore disabled file locks property");
     }
 
-    /* Try to decide if data alignment is required.  The reason to check it here
-     * is to handle correctly the case that the file is in a different file system
-     * than the one where the program is running.
-     */
-    /* NOTE: Use malloc and free here to ensure compatibility with
-     *       posix_memalign.
-     */
-    buf1 = malloc(sizeof(int));
-    if (posix_memalign(&buf2, file->fa.mboundary, file->fa.fbsize) != 0)
-        H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, NULL, "posix_memalign failed");
-
-    if (o_flags & O_CREAT) {
-        if (write(file->fd, buf1, sizeof(int)) < 0) {
-            if (write(file->fd, buf2, file->fa.fbsize) < 0)
-                H5FD_GDS_GOTO_ERROR(H5E_FILE, H5E_WRITEERROR, NULL,
-                            "file system may not support GPUDirect Storage I/O");
-            else
-                file->fa.must_align = TRUE;
-        }
-        else {
-            file->fa.must_align = FALSE;
-            if (-1 == ftruncate(file->fd, (off_t)0))
-                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, NULL, "unable to extend file properly");
-        }
-    }
-    else {
-        if (read(file->fd, buf1, sizeof(int)) < 0) {
-            if (read(file->fd, buf2, file->fa.fbsize) < 0)
-                H5FD_GDS_GOTO_ERROR(H5E_FILE, H5E_READERROR, NULL,
-                            "file system may not support GPUDirect Storage I/O");
-            else
-                file->fa.must_align = TRUE;
-        }
-        else {
-            if (o_flags & O_RDWR) {
-                if (lseek(file->fd, (off_t)0, SEEK_SET) < 0)
-                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, NULL, "unable to seek to proper position");
-                if (write(file->fd, buf1, sizeof(int)) < 0)
-                    file->fa.must_align = TRUE;
-                else
-                    file->fa.must_align = FALSE;
-            }
-            else
-                file->fa.must_align = FALSE;
-        }
-    }
-
-    if (buf1)
-        free(buf1);
-    if (buf2)
-        free(buf2);
-
     /* Set return value */
     ret_value = (H5FD_t *)file;
+fprintf(stderr, "%s:%u - Successfully opened file w/GDS VFD\n", __func__, __LINE__);
 
 done:
     if (ret_value == NULL) {
@@ -900,12 +586,6 @@ H5FD__gds_close(H5FD_t *_file)
 
     if (close(file->fd) < 0)
         H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_CANTCLOSEFILE, FAIL, "unable to close file");
-
-    if (file->td)
-        free(file->td);
-
-    if (file->threads)
-        free(file->threads);
 
     free(file);
 
@@ -1160,25 +840,8 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                size_t size, void *buf /*out*/)
 {
     H5FD_gds_t *file = (H5FD_gds_t *)_file;
-    ssize_t     nbytes;
-    hbool_t     _must_align = TRUE;
-    herr_t      ret_value   = SUCCEED; /* Return value */
-    size_t      alloc_size;
-    void *      copy_buf = NULL, *p2;
-    size_t      _boundary;
-    size_t      _fbsize;
-    size_t      _cbsize;
-    haddr_t     read_size;        /* Size to read into copy buffer */
-    size_t      copy_size = size; /* Size remaining to read when using copy buffer */
-    size_t      copy_offset;      /* Offset into copy buffer of the requested data */
-
-    ssize_t       ret        = -1;
-    int           io_threads = file->num_io_threads;
-    int           block_size = file->io_block_size;
-
     off_t offset = (off_t)addr;
-    ssize_t io_chunk;
-    ssize_t io_chunk_rem;
+    herr_t      ret_value   = SUCCEED; /* Return value */
 
     assert(file && file->pub.cls);
     assert(buf);
@@ -1193,213 +856,14 @@ H5FD__gds_read(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
     if (REGION_OVERFLOW(addr, size))
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
-    if (is_device_pointer(buf)) {
-        /* CUfileError_t status; */
-
-        /* TODO: register device memory only once */
-        /*
-         * if (!reg_once) {
-         *   status = cuFileBufRegister(buf, size, 0);
-         *   if (status.err != CU_FILE_SUCCESS) {
-         *     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
-         *   }
-         *   reg_once = true;
-         * }
-         */
-
-        if (io_threads > 0) {
-            assert(size != 0);
-
-            /* make each thread access at least a 4K page */
-            if ((1 + (size - 1) / 4096) < (unsigned)io_threads) {
-                io_threads = (int)(1 + ((size - 1) / 4096));
-            }
-
-            /*
-             * printf("\tH5Pset_gds_read using io_threads: %d\n", io_threads);
-             * printf("\tH5Pset_gds_read using io_block_size: %d\n", block_size);
-             */
-
-            io_chunk     = (unsigned)size / (unsigned)io_threads;
-            io_chunk_rem = (unsigned)size % (unsigned)io_threads;
-
-            for (int ii = 0; ii < io_threads; ii++) {
-                file->td[ii].rd_devPtr  = buf;
-                file->td[ii].cfr_handle = file->cf_handle;
-
-                file->td[ii].offset        = (off_t)(offset + ii * io_chunk);
-                file->td[ii].devPtr_offset = (off_t)ii * io_chunk;
-                file->td[ii].size          = (size_t)io_chunk;
-                file->td[ii].block_size    = block_size;
-
-                if (ii == io_threads - 1) {
-                    file->td[ii].size = (size_t)(io_chunk + io_chunk_rem);
-                }
-            }
-
-            for (int ii = 0; ii < io_threads; ii++) {
-                pthread_create(&file->threads[ii], NULL, &read_thread_fn, &file->td[ii]);
-            }
-
-            for (int ii = 0; ii < io_threads; ii++) {
-                pthread_join(file->threads[ii], NULL);
-            }
-        }
-        else {
-            ret = cuFileRead(file->cf_handle, buf, size, offset, 0);
-            assert(ret > 0);
-        }
-
-        /* TODO: deregister device memory only once */
-        /*
-         * status = cuFileBufDeregister(buf);
-         * if (status.err != CU_FILE_SUCCESS) {
-         *   H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
-         * }
-         */
-    }
-    else {
-        /* If the system doesn't require data to be aligned, read the data in
-         * the same way as sec2 driver.
-         */
-        _must_align = file->fa.must_align;
-
-        /* Get the memory boundary for alignment, file system block size, and maximal
-         * copy buffer size.
-         */
-        _boundary = file->fa.mboundary;
-        _fbsize   = file->fa.fbsize;
-        _cbsize   = file->fa.cbsize;
-
-        /* if the data is aligned or the system doesn't require data to be aligned,
-         * read it directly from the file.  If not, read a bigger
-         * and aligned data first, then copy the data into memory buffer.
-         */
-        if (!_must_align ||
-            ((addr % _fbsize == 0) && (size % _fbsize == 0) && ((size_t)buf % _boundary == 0))) {
-            /* Seek to the correct location */
-            if ((addr != file->pos || OP_READ != file->op) && lseek(file->fd, (off_t)addr, SEEK_SET) < 0)
-                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
-            /* Read the aligned data in file first, being careful of interrupted
-             * system calls and partial results. */
-            while (size > 0) {
-                do {
-                    nbytes = read(file->fd, buf, size);
-                } while (-1 == nbytes && EINTR == errno);
-                if (-1 == nbytes) /* error */
-                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed");
-                if (0 == nbytes) {
-                    /* end of file but not end of format address space */
-                    memset(buf, 0, size);
-                    break;
-                }
-                assert(nbytes >= 0);
-                assert((size_t)nbytes <= size);
-
-                /* FIXME */
-                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t); */
-
-                size -= (size_t)nbytes;
-
-                /* FIXME */
-                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t); */
-
-                addr += (haddr_t)nbytes;
-                buf = (char *)buf + nbytes;
-            }
-        }
-        else {
-            /* Calculate where we will begin copying from the copy buffer */
-            copy_offset = (size_t)(addr % _fbsize);
-
-            /* allocate memory needed for the GPUDirect Storage IO option up to the maximal
-             * copy buffer size. Make a bigger buffer for aligned I/O if size is
-             * smaller than maximal copy buffer. */
-            alloc_size = ((copy_offset + size - 1) / _fbsize + 1) * _fbsize;
-            if (alloc_size > _cbsize)
-                alloc_size = _cbsize;
-            assert(!(alloc_size % _fbsize));
-            if (posix_memalign(&copy_buf, _boundary, alloc_size) != 0)
-                H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, FAIL, "posix_memalign failed");
-
-            /* look for the aligned position for reading the data */
-            assert(!(((addr / _fbsize) * _fbsize) % _fbsize));
-            if (lseek(file->fd, (off_t)((addr / _fbsize) * _fbsize), SEEK_SET) < 0)
-                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
-
-            /*
-             * Read the aligned data in file into aligned buffer first, then copy the data
-             * into the final buffer.  If the data size is bigger than maximal copy buffer
-             * size, do the reading by segment (the outer while loop).  If not, do one step
-             * reading.
-             */
-            do {
-                /* Read the aligned data in file first.  Not able to handle interrupted
-                 * system calls and partial results like sec2 driver does because the
-                 * data may no longer be aligned. It's especially true when the data in
-                 * file is smaller than ALLOC_SIZE. */
-                memset(copy_buf, 0, alloc_size);
-
-                /* Calculate how much data we have to read in this iteration
-                 * (including unused parts of blocks) */
-                if ((copy_size + copy_offset) < alloc_size)
-                    read_size = ((copy_size + copy_offset - 1) / _fbsize + 1) * _fbsize;
-                else
-                    read_size = alloc_size;
-
-                assert(!(read_size % _fbsize));
-                do {
-                    nbytes = read(file->fd, copy_buf, read_size);
-                } while (-1 == nbytes && EINTR == errno);
-
-                if (-1 == nbytes) /* error */
-                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed");
-
-                /* Copy the needed data from the copy buffer to the output
-                 * buffer, and update copy_size.  If the copy buffer does not
-                 * contain the rest of the data, just copy what's in the copy
-                 * buffer and also update read_addr and copy_offset to read the
-                 * next section of data. */
-                p2 = (unsigned char *)copy_buf + copy_offset;
-                if ((copy_size + copy_offset) <= alloc_size) {
-                    memcpy(buf, p2, copy_size);
-                    buf       = (unsigned char *)buf + copy_size;
-                    copy_size = 0;
-                } /* end if */
-                else {
-                    memcpy(buf, p2, alloc_size - copy_offset);
-                    buf = (unsigned char *)buf + alloc_size - copy_offset;
-                    copy_size -= alloc_size - copy_offset;
-                    copy_offset = 0;
-                } /* end else */
-            } while (copy_size > 0);
-
-            /*Final step: update address*/
-            addr = (haddr_t)(((addr + size - 1) / _fbsize + 1) * _fbsize);
-
-            if (copy_buf) {
-                /* Free with free since it came from posix_memalign */
-                free(copy_buf);
-                copy_buf = NULL;
-            } /* end if */
-        }
-
-        /* Update current position */
-        file->pos = addr;
-        file->op  = OP_READ;
-    }
+    /* Pass to cuFile */
+    if (cuFileRead(file->cf_handle, buf, size, offset, 0) < 0)
+	H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL,
+		"file read failed: file descriptor = %d, "
+		"buf = %p, total read size = %zu, offset = %llu",
+		file->fd, buf, size, (unsigned long long)offset);
 
 done:
-    if (ret_value < 0) {
-        /* Free with free since it came from posix_memalign */
-        if (copy_buf)
-            free(copy_buf);
-
-        /* Reset last file I/O information */
-        file->pos = HADDR_UNDEF;
-        file->op  = OP_UNKNOWN;
-    } /* end if */
-
     H5FD_GDS_FUNC_LEAVE_API;
 }
 
@@ -1429,29 +893,8 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
                 size_t size, const void *buf)
 {
     H5FD_gds_t *file = (H5FD_gds_t *)_file;
-    ssize_t     nbytes;
-    hbool_t     _must_align = TRUE;
-    herr_t      ret_value   = SUCCEED; /* Return value */
-    size_t      alloc_size;
-    void *      copy_buf = NULL, *p1;
-    const void *p3;
-    size_t      _boundary;
-    size_t      _fbsize;
-    size_t      _cbsize;
-    haddr_t     write_addr;       /* Address to write copy buffer */
-    haddr_t     write_size;       /* Size to write from copy buffer */
-    haddr_t     read_size;        /* Size to read into copy buffer */
-    size_t      copy_size = size; /* Size remaining to write when using copy buffer */
-    size_t      copy_offset;      /* Offset into copy buffer of the data to write */
-
-    ssize_t       ret        = -1;
-    int           io_threads = file->num_io_threads;
-    int           block_size = file->io_block_size;
-
-    ssize_t io_chunk;
-    ssize_t io_chunk_rem;
-
     off_t offset = (off_t)addr;
+    herr_t      ret_value   = SUCCEED; /* Return value */
 
     assert(file && file->pub.cls);
     assert(buf);
@@ -1466,260 +909,14 @@ H5FD__gds_write(H5FD_t *_file, H5FD_mem_t type, hid_t dxpl_id, haddr_t addr,
     if (REGION_OVERFLOW(addr, size))
         H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL, "addr overflow");
 
-    if (is_device_pointer(buf)) {
-        /* CUfileError_t status; */
-
-        /* TODO: register device memory only once */
-        /*
-         * if (!reg_once) {
-         *   status = cuFileBufRegister(buf, size, 0);
-         *   if (status.err != CU_FILE_SUCCESS) {
-         *     H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer register failed");
-         *   }
-         *   reg_once = true;
-         * }
-         */
-
-        if (io_threads > 0) {
-            assert(size != 0);
-
-            /* make each thread access at least a 4K page */
-            if ((1 + (size - 1) / 4096) < (unsigned)io_threads) {
-                io_threads = (int)(1 + ((size - 1) / 4096));
-            }
-
-            /*
-             * printf("\tH5Pset_gds_write using io_threads: %d\n", io_threads);
-             * printf("\tH5Pset_gds_write using io_block_size: %d\n", block_size);
-             */
-
-            io_chunk     = (unsigned)size / (unsigned)io_threads;
-            io_chunk_rem = (unsigned)size % (unsigned)io_threads;
-
-            for (int ii = 0; ii < io_threads; ii++) {
-                file->td[ii].wr_devPtr  = buf;
-                file->td[ii].cfr_handle = file->cf_handle;
-
-                file->td[ii].offset        = (off_t)(offset + ii * io_chunk);
-                file->td[ii].devPtr_offset = (off_t)ii * io_chunk;
-                file->td[ii].size          = (size_t)io_chunk;
-                file->td[ii].block_size    = block_size;
-
-                if (ii == io_threads - 1) {
-                    file->td[ii].size = (size_t)(io_chunk + io_chunk_rem);
-                }
-            }
-
-            for (int ii = 0; ii < io_threads; ii++) {
-                pthread_create(&file->threads[ii], NULL, &write_thread_fn, &file->td[ii]);
-            }
-
-            for (int ii = 0; ii < io_threads; ii++) {
-                pthread_join(file->threads[ii], NULL);
-            }
-        }
-        else {
-            /* FIXME: max xfer size, need to batch transfers */
-            ret = cuFileWrite(file->cf_handle, buf, size, offset, 0);
-            assert(ret > 0);
-        }
-
-        /* TODO: deregister device memory only once */
-        /*
-         * status = cuFileBufDeregister(buf);
-         * if (status.err != CU_FILE_SUCCESS) {
-         *   H5FD_GDS_GOTO_ERROR(H5E_INTERNAL, H5E_SYSTEM, NULL, "cufile buffer deregister failed");
-         * }
-         */
-    }
-    else {
-        /* If the system doesn't require data to be aligned, read the data in
-         * the same way as sec2 driver.
-         */
-        _must_align = file->fa.must_align;
-
-        /* Get the memory boundary for alignment, file system block size, and maximal
-         * copy buffer size.
-         */
-        _boundary = file->fa.mboundary;
-        _fbsize   = file->fa.fbsize;
-        _cbsize   = file->fa.cbsize;
-
-        /* if the data is aligned or the system doesn't require data to be aligned,
-         * write it directly to the file.  If not, read a bigger and aligned data
-         * first, update buffer with user data, then write the data out.
-         */
-        if (!_must_align ||
-            ((addr % _fbsize == 0) && (size % _fbsize == 0) && ((size_t)buf % _boundary == 0))) {
-            /* Seek to the correct location */
-            if ((addr != file->pos || OP_WRITE != file->op) && lseek(file->fd, (off_t)addr, SEEK_SET) < 0)
-                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
-
-            while (size > 0) {
-                do {
-                    nbytes = write(file->fd, buf, size);
-                } while (-1 == nbytes && EINTR == errno);
-                if (-1 == nbytes) /* error */
-                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_WRITEERROR, FAIL, "file write failed");
-                assert(nbytes > 0);
-                assert((size_t)nbytes <= size);
-
-                /* FIXME */
-                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, size_t); */
-
-                size -= (size_t)nbytes;
-
-                /* FIXME */
-                /* H5_CHECK_OVERFLOW(nbytes, ssize_t, haddr_t); */
-
-                addr += (haddr_t)nbytes;
-                buf = (const char *)buf + nbytes;
-            }
-        }
-        else {
-            /* Calculate where we will begin reading from (on disk) and where we
-             * will begin copying from the copy buffer */
-            write_addr  = (addr / _fbsize) * _fbsize;
-            copy_offset = (size_t)(addr % _fbsize);
-
-            /* allocate memory needed for the GPUDirect Storage IO option up to the maximal
-             * copy buffer size. Make a bigger buffer for aligned I/O if size is
-             * smaller than maximal copy buffer.
-             */
-            alloc_size = ((copy_offset + size - 1) / _fbsize + 1) * _fbsize;
-            if (alloc_size > _cbsize)
-                alloc_size = _cbsize;
-            assert(!(alloc_size % _fbsize));
-
-            if (posix_memalign(&copy_buf, _boundary, alloc_size) != 0)
-                H5FD_GDS_GOTO_ERROR(H5E_RESOURCE, H5E_CANTALLOC, FAIL, "posix_memalign failed");
-
-            /* look for the right position for reading or writing the data */
-            if (lseek(file->fd, (off_t)write_addr, SEEK_SET) < 0)
-                H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
-
-            p3 = buf;
-            do {
-                /* Calculate how much data we have to write in this iteration
-                 * (including unused parts of blocks) */
-                if ((copy_size + copy_offset) < alloc_size)
-                    write_size = ((copy_size + copy_offset - 1) / _fbsize + 1) * _fbsize;
-                else
-                    write_size = alloc_size;
-
-                /*
-                 * Read the aligned data first if the aligned region doesn't fall
-                 * entirely in the range to be written.  Not able to handle interrupted
-                 * system calls and partial results like sec2 driver does because the
-                 * data may no longer be aligned. It's especially true when the data in
-                 * file is smaller than ALLOC_SIZE.  Only read the entire section if
-                 * both ends are misaligned, otherwise only read the block on the
-                 * misaligned end.
-                 */
-                memset(copy_buf, 0, _fbsize);
-
-                if (copy_offset > 0) {
-                    if ((write_addr + write_size) > (addr + size)) {
-                        assert((write_addr + write_size) - (addr + size) < _fbsize);
-                        read_size = write_size;
-                        p1        = copy_buf;
-                    } /* end if */
-                    else {
-                        read_size = _fbsize;
-                        p1        = copy_buf;
-                    } /* end else */
-                }     /* end if */
-                else if ((write_addr + write_size) > (addr + size)) {
-                    assert((write_addr + write_size) - (addr + size) < _fbsize);
-                    read_size = _fbsize;
-                    p1        = (unsigned char *)copy_buf + write_size - _fbsize;
-
-                    /* Seek to the last block, for reading */
-                    assert(!((write_addr + write_size - _fbsize) % _fbsize));
-                    if (lseek(file->fd, (off_t)(write_addr + write_size - _fbsize), SEEK_SET) < 0)
-                        H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
-                } /* end if */
-                else
-                    p1 = NULL;
-
-                if (p1) {
-                    assert(!(read_size % _fbsize));
-                    do {
-                        nbytes = read(file->fd, p1, read_size);
-                    } while (-1 == nbytes && EINTR == errno);
-
-                    if (-1 == nbytes) /* error */
-                        H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_READERROR, FAIL, "file read failed");
-                } /* end if */
-
-                /* look for the right position and append or copy the data to be written to
-                 * the aligned buffer.
-                 * Consider all possible situations here: file address is not aligned on
-                 * file block size; the end of data address is not aligned; the end of data
-                 * address is aligned; data size is smaller or bigger than maximal copy size.
-                 */
-                p1 = (unsigned char *)copy_buf + copy_offset;
-                if ((copy_size + copy_offset) <= alloc_size) {
-                    memcpy(p1, p3, copy_size);
-                    copy_size = 0;
-                } /* end if */
-                else {
-                    memcpy(p1, p3, alloc_size - copy_offset);
-                    p3 = (const unsigned char *)p3 + (alloc_size - copy_offset);
-                    copy_size -= alloc_size - copy_offset;
-                    copy_offset = 0;
-                } /* end else */
-
-                /*look for the aligned position for writing the data*/
-                assert(!(write_addr % _fbsize));
-                if (lseek(file->fd, (off_t)write_addr, SEEK_SET) < 0)
-                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to seek to proper position");
-
-                /*
-                 * Write the data. It doesn't truncate the extra data introduced by
-                 * alignment because that step is done in H5FD_gds_flush.
-                 */
-                assert(!(write_size % _fbsize));
-                do {
-                    nbytes = write(file->fd, copy_buf, write_size);
-                } while (-1 == nbytes && EINTR == errno);
-
-                if (-1 == nbytes) /* error */
-                    H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_WRITEERROR, FAIL, "file write failed");
-
-                /* update the write address */
-                write_addr += write_size;
-            } while (copy_size > 0);
-
-            /*Update the address and size*/
-            addr = write_addr;
-            buf  = (const char *)buf + size;
-
-            if (copy_buf) {
-                /* Free with free since it came from posix_memalign */
-                free(copy_buf);
-                copy_buf = NULL;
-            } /* end if */
-        }
-
-        /* Update current position and eof */
-        file->pos = addr;
-        file->op  = OP_WRITE;
-        if (file->pos > file->eof)
-            file->eof = file->pos;
-    }
+    /* Pass to cuFile */
+    if (cuFileWrite(file->cf_handle, buf, size, offset, 0) < 0)
+	H5FD_GDS_GOTO_ERROR(H5E_ARGS, H5E_OVERFLOW, FAIL,
+		"file write failed: file descriptor = %d, "
+		"buf = %p, total write size = %zu, offset = %llu",
+		file->fd, buf, size, (unsigned long long)offset);
 
 done:
-    if (ret_value < 0) {
-        /* Free with free since it came from posix_memalign */
-        if (copy_buf)
-            free(copy_buf);
-
-        /* Reset last file I/O information */
-        file->pos = HADDR_UNDEF;
-        file->op  = OP_UNKNOWN;
-    } /* end if */
-
     H5FD_GDS_FUNC_LEAVE_API;
 }
 
@@ -1805,17 +1002,6 @@ H5FD__gds_truncate(H5FD_t *_file, hid_t dxpl_id, hbool_t closing)
 
         /* Update the eof value */
         file->eof = file->eoa;
-
-        /* Reset last file I/O information */
-        file->pos = HADDR_UNDEF;
-        file->op  = OP_UNKNOWN;
-    }
-    else if (file->fa.must_align) {
-        /*Even though eof is equal to eoa, file is still truncated because GPUDirect Storage I/O
-         *write introduces some extra data for alignment.
-         */
-        if (-1 == ftruncate(file->fd, (off_t)file->eof))
-            H5FD_GDS_SYS_GOTO_ERROR(H5E_IO, H5E_SEEKERROR, FAIL, "unable to extend file properly");
     }
 
 done:
