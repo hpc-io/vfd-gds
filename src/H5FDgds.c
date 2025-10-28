@@ -550,6 +550,7 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
 
     /* Set return value */
     ret_value = (H5FD_t *)file;
+fprintf(stderr, "%s:%u - Successfully opened file w/GDS VFD\n", __func__, __LINE__);
 
 done:
     if (ret_value == NULL) {
