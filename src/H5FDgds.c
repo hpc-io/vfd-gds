@@ -26,6 +26,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include <unistd.h>
 #include <sys/file.h>
@@ -245,6 +246,43 @@ static const H5FD_class_t H5FD_gds_g = {
     H5FD__gds_ctl,           /* ctl                  */
     H5FD_FLMAP_DICHOTOMY     /* fl_map               */
 };
+
+/*-------------------------------------------------------------------------
+ * Function:    H5FD__gds_parse_boolean_env
+ *
+ * Purpose:     Parse a boolean environment variable.
+ *              Accepts: "1", "true", "yes", "on" (case-insensitive) as TRUE
+ *                       "0", "false", "no", "off" (case-insensitive) as FALSE
+ *              If variable not set or empty, returns default_value.
+ *
+ * Return:      Boolean value
+ *
+ *-------------------------------------------------------------------------
+ */
+static hbool_t
+H5FD__gds_parse_boolean_env(const char *env_name, hbool_t default_value)
+{
+    const char *env_val = getenv(env_name);
+
+    if (!env_val || env_val[0] == '\0')
+        return default_value;
+
+    if (strcmp(env_val, "1") == 0 ||
+        strcasecmp(env_val, "true") == 0 ||
+        strcasecmp(env_val, "yes") == 0 ||
+        strcasecmp(env_val, "on") == 0)
+        return TRUE;
+
+    if (strcmp(env_val, "0") == 0 ||
+        strcasecmp(env_val, "false") == 0 ||
+        strcasecmp(env_val, "no") == 0 ||
+        strcasecmp(env_val, "off") == 0)
+        return FALSE;
+
+    fprintf(stderr, "Warning: Unrecognized value '%s' for %s, using default (%s)\n",
+            env_val, env_name, default_value ? "true" : "false");
+    return default_value;
+} /* end H5FD__gds_parse_boolean_env() */
 
 /*-------------------------------------------------------------------------
  * Function:    H5FD_gds_init
@@ -485,6 +523,15 @@ H5FD__gds_open(const char *name, unsigned flags, hid_t fapl_id, haddr_t maxaddr)
         o_flags |= O_CREAT;
     if (H5F_ACC_EXCL & flags)
         o_flags |= O_EXCL;
+
+    /* Check environment variable for O_DIRECT flag
+     * Accepts: 1, true, yes, on (case-insensitive) to enable
+     *          0, false, no, off (case-insensitive) to disable
+     * Default: enabled (TRUE) 
+     */
+    if (H5FD__gds_parse_boolean_env("HDF5_GDS_VFD_OPEN_DIRECT", TRUE)) {
+        o_flags |= O_DIRECT;
+    }
 
     /* Open the file */
     if ((fd = open(name, o_flags, H5FD_GDS_POSIX_CREATE_MODE_RW)) < 0)
