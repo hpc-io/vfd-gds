@@ -32,7 +32,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include <cuda.h>
 #include <cuda_runtime.h>
 #include <cufile.h>
 
@@ -156,18 +155,6 @@ typedef struct H5FD_gds_t {
 #define REGION_OVERFLOW(A, Z)                                                                                \
     (ADDR_OVERFLOW(A) || SIZE_OVERFLOW(Z) || HADDR_UNDEF == (A) + (Z) || (off_t)((A) + (Z)) < (off_t)(A))
 
-
-#define check_cudadrivercall(fn)                                                                             \
-    {                                                                                                        \
-        CUresult res = fn;                                                                                   \
-        if (res != CUDA_SUCCESS) {                                                                           \
-            const char *str = nullptr;                                                                       \
-            cuGetErrorName(res, &str);                                                                       \
-            fprintf(stderr, "cuda driver api call failed %d, %d : %s\n", fn, __LINE__, str);                 \
-            fprintf(stderr, "EXITING program!!!\n");                                                         \
-            exit(1);                                                                                         \
-        }                                                                                                    \
-    }
 
 #define check_cudaruntimecall(fn)                                                                            \
     {                                                                                                        \
